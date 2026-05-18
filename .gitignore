@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+release/
+*.spec.bak
+*.zip
+evidence/logs/*.json
+evidence/screenshots/*.png
+config/desktop_history.json
