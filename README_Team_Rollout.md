@@ -3,7 +3,7 @@
 ## Recommended Distribution
 Distribute the runner as a versioned portable Windows ZIP:
 
-`Citrix_Test_Automation_Runner_v1.0.0.zip`
+`Citrix_Test_Automation_Runner_v1.0.1.zip`
 
 Each tester should extract the ZIP locally to:
 

@@ -23,6 +23,11 @@ class ExecutionResult:
     screenshot_path: Path | None
     evidence_paths: tuple[Path, ...] = ()
     error_message: str | None = None
+    requires_manual_check: bool = False
+    manual_check_message: str | None = None
+    manual_confirmation_required: bool = False
+    manual_confirmation_message: str | None = None
+    manual_confirmation_screenshot: Path | None = None
 
 
 class TestRunner:

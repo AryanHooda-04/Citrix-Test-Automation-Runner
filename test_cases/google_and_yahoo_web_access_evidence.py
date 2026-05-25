@@ -50,11 +50,16 @@ def run(ctx):
     if _is_consent_modal_visible(ctx, "google"):
         ctx.step("Google consent popup detected. Running Tab x4 + Enter.")
         _accept_using_tabs(ctx, presses=4)
+        ctx.step("Wait after Google permission handling so the page can finish loading")
+        ctx.wait(ctx.config.wait("google_after_permission_wait_sec", 5.0))
     else:
         ctx.step("Google consent popup not detected. Skipping Tab/Enter consent handling.")
 
     ctx.step("Dismiss possible Google Chrome promotion popup only if it is visible")
     _dismiss_google_chrome_prompt_if_visible(ctx)
+
+    ctx.step("Final Google page settle wait before evidence capture")
+    ctx.wait(ctx.config.wait("google_before_capture_wait_sec", 10.0))
 
     ctx.step("Step 7: Capture Google evidence")
     google_path = ctx.capture_evidence("google_evidence")

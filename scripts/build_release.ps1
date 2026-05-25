@@ -15,7 +15,9 @@ if (-not $Version) {
 }
 
 $ReleaseRoot = Join-Path $Root "release"
-$DistApp = Join-Path $Root "dist\CitrixTestAutomationRunner"
+$BuildRoot = Join-Path $Root "build\release_$Version"
+$DistRoot = Join-Path $Root "dist\release_$Version"
+$DistApp = Join-Path $DistRoot "CitrixTestAutomationRunner"
 $ReleaseName = "Citrix_Test_Automation_Runner_v$Version"
 $ReleaseDir = Join-Path $ReleaseRoot $ReleaseName
 $ZipPath = Join-Path $ReleaseRoot "$ReleaseName.zip"
@@ -27,7 +29,7 @@ if (Test-Path $ZipPath) {
     Remove-Item -LiteralPath $ZipPath -Force
 }
 
-python -m PyInstaller --noconfirm --clean "CitrixTestAutomationRunner.spec"
+python -m PyInstaller --noconfirm --workpath $BuildRoot --distpath $DistRoot "CitrixTestAutomationRunner.spec"
 if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller build failed with exit code $LASTEXITCODE."
 }

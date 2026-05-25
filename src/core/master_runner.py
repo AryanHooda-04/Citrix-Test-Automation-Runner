@@ -32,6 +32,11 @@ class MasterExecutionResult:
     status: str
     log_path: Path
     failed_count: int
+    manual_check_required: bool = False
+    manual_check_message: str | None = None
+    passed_count: int = 0
+    total_count: int = 0
+    duration_seconds: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -43,6 +48,11 @@ class CompleteExecutionResult:
     shakedown_status: str
     iat_status: str
     report_path: Path | None = None
+    manual_check_required: bool = False
+    manual_check_message: str | None = None
+    passed_count: int = 0
+    total_count: int = 0
+    duration_seconds: float = 0.0
 
 
 class MasterRunner:
@@ -52,6 +62,7 @@ class MasterRunner:
         citrix_desktop_name: str,
         status_callback: Callable[[str], None] | None = None,
         test_status_callback: Callable[[str, str], None] | None = None,
+        manual_confirmation_callback: Callable[[ExecutionResult], None] | None = None,
         stop_event: Event | None = None,
         pause_event: Event | None = None,
     ) -> None:
@@ -59,6 +70,7 @@ class MasterRunner:
         self.citrix_desktop_name = citrix_desktop_name
         self.status_callback = status_callback or (lambda message: None)
         self.test_status_callback = test_status_callback or (lambda test_id, status: None)
+        self.manual_confirmation_callback = manual_confirmation_callback
         self.stop_event = stop_event
         self.pause_event = pause_event
         self.master_steps: list[dict[str, str]] = []
@@ -69,6 +81,8 @@ class MasterRunner:
         mandatory_order = mandatory_order_for_desktop(self.citrix_desktop_name)
         results = []
         stopped = False
+        manual_check_required = False
+        manual_check_message = None
 
         self._message("Starting Mandatory Testcases")
         self._message(f"Citrix Desktop Name: {self.citrix_desktop_name}")
@@ -104,6 +118,23 @@ class MasterRunner:
                 self.test_status_callback(test_case.id, result.status)
 
                 results.append(self._result_to_log_entry(result))
+                if result.manual_confirmation_required:
+                    self._pause_for_manual_confirmation(result, "Mandatory Testcases")
+
+                if result.requires_manual_check:
+                    manual_check_required = True
+                    manual_check_message = result.manual_check_message or result.error_message
+                    self._message(
+                        manual_check_message
+                        or "Manual check required before continuing Mandatory Testcases.",
+                        "ERROR",
+                    )
+                    self._message(
+                        "Mandatory sequence stopped because Hostname_and_IP_Evidence needs manual review.",
+                        "ERROR",
+                    )
+                    break
+
                 if result.status == "Stopped":
                     stopped = True
                     self._message("Mandatory Testcases stopped by user", "ERROR")
@@ -122,11 +153,23 @@ class MasterRunner:
 
         ended_at = datetime.now()
         failed_count = sum(1 for item in results if not is_success_status(item["status"]))
+        passed_count = sum(1 for item in results if is_success_status(item["status"]))
+        total_count = len(results)
+        duration_seconds = round((ended_at - started_at).total_seconds(), 3)
         final_status = "Stopped" if stopped or self._is_stop_requested() else ("Pass" if failed_count == 0 else "Fail")
         log_path = self._write_master_log(started_at, ended_at, final_status, results)
         self._message(f"Mandatory Testcases completed: {final_status}")
         self._message(f"Master log: {log_path}")
-        return MasterExecutionResult(final_status, log_path, failed_count)
+        return MasterExecutionResult(
+            status=final_status,
+            log_path=log_path,
+            failed_count=failed_count,
+            manual_check_required=manual_check_required,
+            manual_check_message=manual_check_message,
+            passed_count=passed_count,
+            total_count=total_count,
+            duration_seconds=duration_seconds,
+        )
 
     def _result_to_log_entry(self, result: ExecutionResult) -> dict:
         return {
@@ -135,7 +178,30 @@ class MasterRunner:
             "screenshots": [str(path) for path in result.evidence_paths],
             "log_path": str(result.log_path),
             "error": result.error_message,
+            "requires_manual_check": result.requires_manual_check,
+            "manual_check_message": result.manual_check_message,
+            "manual_confirmation_required": result.manual_confirmation_required,
+            "manual_confirmation_message": result.manual_confirmation_message,
+            "manual_confirmation_screenshot": (
+                str(result.manual_confirmation_screenshot)
+                if result.manual_confirmation_screenshot
+                else None
+            ),
         }
+
+    def _pause_for_manual_confirmation(self, result: ExecutionResult, scope: str) -> None:
+        message = (
+            result.manual_confirmation_message
+            or "Hostname/IP evidence needs manual confirmation before continuing."
+        )
+        self._message(message, "WARNING")
+        if self.pause_event is None or self.manual_confirmation_callback is None:
+            return
+        self.pause_event.set()
+        self.manual_confirmation_callback(result)
+        self._message(f"{scope} paused for Hostname/IP evidence confirmation.", "WARNING")
+        wait_if_paused(self.pause_event, self.stop_event)
+        self._message(f"{scope} resumed after Hostname/IP evidence confirmation.")
 
     def _cleanup_after_test(self, test_name: str) -> None:
         self._message(f"Cleanup started after {test_name}")
@@ -199,6 +265,9 @@ class MasterRunner:
             "start_time": started_at.replace(microsecond=0).isoformat(),
             "end_time": ended_at.replace(microsecond=0).isoformat(),
             "total_execution_time_seconds": round((ended_at - started_at).total_seconds(), 3),
+            "passed_count": sum(1 for item in results if is_success_status(item["status"])),
+            "failed_count": sum(1 for item in results if not is_success_status(item["status"])),
+            "total_count": len(results),
             "between_tests_delay_seconds": self.config.wait("mandatory_between_tests_wait_sec", 30.0),
             "delay_confirmation": "Configured delay enforced between mandatory test cases.",
             "final_status": final_status,
@@ -308,11 +377,21 @@ class ShakedownRunner:
 
         ended_at = datetime.now()
         failed_count = sum(1 for item in results if not is_success_status(item["status"]))
+        passed_count = sum(1 for item in results if is_success_status(item["status"]))
+        total_count = len(results)
+        duration_seconds = round((ended_at - started_at).total_seconds(), 3)
         final_status = "Stopped" if stopped or self._is_stop_requested() else ("Pass" if failed_count == 0 else "Fail")
         log_path = self._write_master_log(started_at, ended_at, final_status, results)
         self._message(f"Shakedown Testcases completed: {final_status}")
         self._message(f"Master log: {log_path}")
-        return MasterExecutionResult(final_status, log_path, failed_count)
+        return MasterExecutionResult(
+            status=final_status,
+            log_path=log_path,
+            failed_count=failed_count,
+            passed_count=passed_count,
+            total_count=total_count,
+            duration_seconds=duration_seconds,
+        )
 
     def _result_to_log_entry(self, result: ExecutionResult) -> dict:
         return {
@@ -354,6 +433,9 @@ class ShakedownRunner:
             "start_time": started_at.replace(microsecond=0).isoformat(),
             "end_time": ended_at.replace(microsecond=0).isoformat(),
             "total_execution_time_seconds": round((ended_at - started_at).total_seconds(), 3),
+            "passed_count": sum(1 for item in results if is_success_status(item["status"])),
+            "failed_count": sum(1 for item in results if not is_success_status(item["status"])),
+            "total_count": len(results),
             "between_tests_delay_seconds": self.config.wait("shakedown_between_tests_wait_sec", 10.0),
             "delay_confirmation": "Configured delay enforced between shakedown test cases.",
             "final_status": final_status,
@@ -393,6 +475,7 @@ class CompleteTestingRunner:
         status_callback: Callable[[str], None] | None = None,
         test_status_callback: Callable[[str, str], None] | None = None,
         phase_status_callback: Callable[[str, str], None] | None = None,
+        manual_confirmation_callback: Callable[[ExecutionResult], None] | None = None,
         stop_event: Event | None = None,
         pause_event: Event | None = None,
     ) -> None:
@@ -401,6 +484,7 @@ class CompleteTestingRunner:
         self.status_callback = status_callback or (lambda message: None)
         self.test_status_callback = test_status_callback or (lambda test_id, status: None)
         self.phase_status_callback = phase_status_callback or (lambda phase, status: None)
+        self.manual_confirmation_callback = manual_confirmation_callback
         self.stop_event = stop_event
         self.pause_event = pause_event
         self.master_steps: list[dict[str, str]] = []
@@ -413,6 +497,8 @@ class CompleteTestingRunner:
         shakedown_payload: dict = {}
         iat_results: list[dict] = []
         post_complete_results: list[dict] = []
+        manual_check_required = False
+        manual_check_message = None
 
         mandatory_status = "Fail"
         shakedown_status = "Fail"
@@ -428,6 +514,7 @@ class CompleteTestingRunner:
                 citrix_desktop_name=self.citrix_desktop_name,
                 status_callback=self.status_callback,
                 test_status_callback=self.test_status_callback,
+                manual_confirmation_callback=self.manual_confirmation_callback,
                 stop_event=self.stop_event,
                 pause_event=self.pause_event,
             ).run(test_cases)
@@ -435,8 +522,25 @@ class CompleteTestingRunner:
             self.phase_status_callback("mandatory", mandatory_status)
             mandatory_payload = _read_json_log(mandatory_result.log_path)
             stopped = mandatory_status == "Stopped"
+            manual_check_required = mandatory_result.manual_check_required
+            manual_check_message = mandatory_result.manual_check_message
 
-            if not stopped:
+            if manual_check_required:
+                shakedown_status = "Skipped"
+                iat_status = "Skipped"
+                self.phase_status_callback("shakedown", shakedown_status)
+                self.phase_status_callback("iat", iat_status)
+                self._message(
+                    manual_check_message
+                    or "Manual check required before continuing Complete Testing.",
+                    "ERROR",
+                )
+                self._message(
+                    "Complete Testing stopped before Shakedown because Hostname_and_IP_Evidence needs manual review.",
+                    "ERROR",
+                )
+
+            if not stopped and not manual_check_required:
                 self._check_stop()
                 phase_delay = self.config.wait("complete_phase_transition_wait_sec", 10.0)
                 self._message(f"Complete Testing delay before Shakedown: {phase_delay} second(s)")
@@ -456,7 +560,7 @@ class CompleteTestingRunner:
                 shakedown_payload = _read_json_log(shakedown_result.log_path)
                 stopped = shakedown_status == "Stopped"
 
-            if not stopped:
+            if not stopped and not manual_check_required:
                 self._check_stop()
                 phase_delay = self.config.wait("complete_phase_transition_wait_sec", 10.0)
                 self._message(f"Complete Testing delay before IAT: {phase_delay} second(s)")
@@ -467,7 +571,7 @@ class CompleteTestingRunner:
                 iat_status = "Pass" if iat_results and all(is_success_status(item["status"]) for item in iat_results) else "Fail"
                 self.phase_status_callback("iat", iat_status)
 
-            if not stopped:
+            if not stopped and not manual_check_required:
                 self._check_stop()
                 self.phase_status_callback("post_complete", "Running")
                 post_complete_result = self._capture_post_complete_zscaler_evidence()
@@ -482,6 +586,10 @@ class CompleteTestingRunner:
         phase_statuses = [mandatory_status, shakedown_status, iat_status]
         failed_count = sum(1 for status in phase_statuses if not is_success_status(status))
         failed_count += sum(1 for item in post_complete_results if not is_success_status(item.get("status", "Fail")))
+        result_items = _combined_result_items(mandatory_payload, shakedown_payload, iat_results, post_complete_results)
+        passed_count = sum(1 for item in result_items if is_success_status(item.get("status", "Fail")))
+        total_count = len(result_items)
+        duration_seconds = round((ended_at - started_at).total_seconds(), 3)
         final_status = "Stopped" if stopped or self._is_stop_requested() else ("Pass" if failed_count == 0 else "Fail")
         log_path = self._write_complete_log(
             started_at,
@@ -493,18 +601,31 @@ class CompleteTestingRunner:
             mandatory_status,
             shakedown_status,
             iat_status,
+            manual_check_required,
+            manual_check_message,
+            passed_count,
+            total_count,
         )
-        report_path = self._generate_word_report(log_path, final_status)
+        if manual_check_required:
+            report_path = None
+            self._message("Word report generation skipped until Hostname/IP evidence is manually checked.")
+        else:
+            report_path = self._generate_word_report(log_path, final_status)
         self._message(f"Perform Complete Testing completed: {final_status}")
         self._message(f"Complete Testing log: {log_path}")
         return CompleteExecutionResult(
-            final_status,
-            log_path,
-            failed_count,
-            mandatory_status,
-            shakedown_status,
-            iat_status,
-            report_path,
+            status=final_status,
+            log_path=log_path,
+            failed_count=failed_count,
+            mandatory_status=mandatory_status,
+            shakedown_status=shakedown_status,
+            iat_status=iat_status,
+            report_path=report_path,
+            manual_check_required=manual_check_required,
+            manual_check_message=manual_check_message,
+            passed_count=passed_count,
+            total_count=total_count,
+            duration_seconds=duration_seconds,
         )
 
     def _run_iat_tests(self, tests_by_name: dict[str, TestCase]) -> list[dict]:
@@ -634,6 +755,10 @@ class CompleteTestingRunner:
         mandatory_status: str,
         shakedown_status: str,
         iat_status: str,
+        manual_check_required: bool = False,
+        manual_check_message: str | None = None,
+        passed_count: int = 0,
+        total_count: int = 0,
     ) -> Path:
         logs_dir = desktop_scoped_path(self.config.path("logs_dir"), self.citrix_desktop_name)
         logs_dir.mkdir(parents=True, exist_ok=True)
@@ -646,6 +771,9 @@ class CompleteTestingRunner:
             "start_time": started_at.replace(microsecond=0).isoformat(),
             "end_time": ended_at.replace(microsecond=0).isoformat(),
             "total_execution_duration_seconds": round((ended_at - started_at).total_seconds(), 3),
+            "passed_count": passed_count,
+            "failed_count": max(total_count - passed_count, 0),
+            "total_count": total_count,
             "phase_transition_delay_seconds": self.config.wait("complete_phase_transition_wait_sec", 10.0),
             "evidence_folder_paths": {
                 "mandatory": str(screenshots_root / MANDATORY_EVIDENCE_FOLDER),
@@ -669,6 +797,8 @@ class CompleteTestingRunner:
                 "test_execution_order": IAT_TEST_CASE_ORDER,
                 "individual_results": iat_results,
             },
+            "manual_check_required": manual_check_required,
+            "manual_check_message": manual_check_message,
             "overall_execution_result": final_status,
             "master_steps": self.master_steps,
         }
@@ -732,6 +862,20 @@ def _read_json_log(path: Path) -> dict:
         return payload
     except (OSError, json.JSONDecodeError):
         return {"log_path": str(path), "individual_results": []}
+
+
+def _combined_result_items(
+    mandatory_payload: dict,
+    shakedown_payload: dict,
+    iat_results: list[dict],
+    post_complete_results: list[dict],
+) -> list[dict]:
+    items: list[dict] = []
+    items.extend(mandatory_payload.get("individual_results", []))
+    items.extend(shakedown_payload.get("individual_results", []))
+    items.extend(iat_results)
+    items.extend(post_complete_results)
+    return items
 
 
 def _append_payload_results(payload: dict, results: list[dict]) -> None:

@@ -132,6 +132,38 @@ class ScreenshotManager:
         return hostname or "Unknown"
 
 
+def apply_hostname_overlay_override(
+    screenshot_path: Path,
+    screenshots_dir: Path,
+    desktop_name: str | None,
+    hostname: str,
+) -> str:
+    silo_name = _silo_name_from_desktop(desktop_name)
+    normalized_hostname = _normalize_hostname_for_silo(hostname, silo_name)
+    if not normalized_hostname:
+        return ""
+
+    context = _load_context(screenshots_dir)
+    context["hostname"] = normalized_hostname
+    _save_context(screenshots_dir, context)
+    _refresh_existing_screenshot_overlays(screenshots_dir, silo_name, normalized_hostname)
+
+    if screenshot_path.exists():
+        try:
+            image = Image.open(screenshot_path)
+            image.load()
+            updated = _apply_overlay(
+                image,
+                f"Silo: {silo_name}",
+                f"Hostname: {normalized_hostname}",
+                cover_existing=True,
+            )
+            updated.save(screenshot_path)
+        except OSError:
+            pass
+    return normalized_hostname
+
+
 def _apply_overlay(
     image: Image.Image,
     line_1: str,
@@ -273,14 +305,17 @@ def _is_hostname_capture_candidate(test_case_name: str) -> bool:
 def _extract_hostname_from_fixed_crop(image: Image.Image, silo_name: str = "") -> str:
     if image.width < 240 or image.height < 160:
         return ""
+
+    crop = image.crop((1, 170, min(image.width, 360), min(image.height, 205))).convert("L")
+    text = _ocr_terminal_hostname_crop(crop)
+    text = _normalize_hostname_for_silo(text, silo_name)
+    if _looks_like_terminal_hostname(text):
+        return text
+
     hostname = _extract_hostname_from_terminal_lines(image, silo_name)
     if hostname:
         return hostname
-
-    crop = image.crop((1, 170, 240, 200)).convert("L")
-    text = _ocr_terminal_hostname_crop(crop)
-    text = _normalize_hostname_for_silo(text, silo_name)
-    return text if _looks_like_terminal_hostname(text) else ""
+    return ""
 
 
 def _extract_hostname_from_terminal_lines(image: Image.Image, silo_name: str = "") -> str:
@@ -321,18 +356,27 @@ def _extract_hostname_from_terminal_lines(image: Image.Image, silo_name: str = "
 def _looks_like_terminal_hostname(value: str) -> bool:
     if not _looks_like_hostname(value):
         return False
-    if "-" not in value:
-        return False
-    if not re.search(r"\d", value):
+    if not _looks_like_citrix_hostname(value):
         return False
     return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{5,31}", value))
+
+
+def _looks_like_citrix_hostname(value: str, silo_name: str = "") -> bool:
+    normalized = (value or "").strip().upper()
+    if not re.fullmatch(r"[A-Z0-9]{3,12}RW\d{2}-[A-Z0-9][A-Z0-9._-]{1,31}", normalized):
+        return False
+    silo_number = _silo_number_from_name(silo_name)
+    if silo_number and f"RW{silo_number}-" not in normalized:
+        return False
+    return True
 
 
 def _hostname_candidate_score(value: str) -> tuple[int, int, int]:
     normalized = value.upper()
     prefix_score = 1 if normalized.startswith(("VTA", "VTE", "VTN", "VPD", "SILO")) else 0
     hyphen_score = normalized.count("-")
-    return (prefix_score, hyphen_score, -abs(len(normalized) - 14))
+    rw_score = 1 if re.search(r"RW\d{2}-", normalized) else 0
+    return (rw_score, prefix_score, hyphen_score)
 
 
 def _should_replace_hostname(current: str, candidate: str) -> bool:
@@ -352,20 +396,26 @@ def _normalize_hostname_for_silo(value: str, silo_name: str = "") -> str:
     if candidate.startswith("YFLA1RW"):
         candidate = "VTA1RW" + candidate[len("YFLA1RW") :]
 
-    if _looks_like_terminal_hostname(candidate):
+    if _looks_like_citrix_hostname(candidate, silo_name):
         return candidate
 
-    suffix_match = re.search(r"RW(?P<silo>\d{2})-(?P<tail>16[A-Z0-9]{4,})", candidate)
+    embedded_match = re.search(r"(?P<host>[A-Z0-9]{3,12}RW\d{2}-[A-Z0-9][A-Z0-9._-]{1,31})", candidate)
+    if embedded_match:
+        embedded = embedded_match.group("host")
+        if _looks_like_citrix_hostname(embedded, silo_name):
+            return embedded
+
+    suffix_match = re.search(r"RW(?P<silo>\d{2})-(?P<tail>[A-Z0-9][A-Z0-9._-]{1,31})", candidate)
     if suffix_match:
         matched_silo = suffix_match.group("silo")
         tail = suffix_match.group("tail")
         if not silo_number or matched_silo == silo_number:
             prefix = _hostname_prefix_for_silo(matched_silo, silo_name)
-            normalized = f"{prefix}RW{matched_silo}-{tail[:6]}"
-            if _looks_like_terminal_hostname(normalized):
+            normalized = f"{prefix}RW{matched_silo}-{tail}"
+            if _looks_like_citrix_hostname(normalized, silo_name):
                 return normalized
 
-    return candidate if _looks_like_terminal_hostname(candidate) else ""
+    return ""
 
 
 def _silo_number_from_name(silo_name: str) -> str:
