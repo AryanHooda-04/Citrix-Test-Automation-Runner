@@ -100,6 +100,30 @@ class ScreenshotManager:
     def _hostname_for_overlay(self, test_case_name: str, image: Image.Image) -> str:
         context = _load_context(self.screenshots_dir)
         silo_name = _silo_name_from_desktop(self.desktop_name)
+
+        if _is_hostname_capture_candidate(test_case_name):
+            extracted_hostname = _normalize_hostname_for_silo(
+                _extract_hostname_from_fixed_crop(image, silo_name),
+                silo_name,
+            )
+            if extracted_hostname:
+                stored_hostname = str(context.get("hostname") or "").strip()
+                normalized_stored_hostname = _normalize_hostname_for_silo(stored_hostname, silo_name)
+                context["hostname"] = extracted_hostname
+                _save_context(self.screenshots_dir, context)
+                if extracted_hostname != normalized_stored_hostname:
+                    _refresh_existing_screenshot_overlays(
+                        self.screenshots_dir,
+                        silo_name,
+                        extracted_hostname,
+                    )
+                return extracted_hostname
+
+            if context.get("hostname"):
+                context.pop("hostname", None)
+                _save_context(self.screenshots_dir, context)
+            return "Unknown"
+
         stored_hostname = str(context.get("hostname") or "").strip()
         hostname = _normalize_hostname_for_silo(stored_hostname, silo_name)
         if hostname != stored_hostname:
@@ -109,26 +133,6 @@ class ScreenshotManager:
                 context.pop("hostname", None)
             _save_context(self.screenshots_dir, context)
 
-        if _is_hostname_capture_candidate(test_case_name):
-            extracted_hostname = _normalize_hostname_for_silo(
-                _extract_hostname_from_fixed_crop(image, silo_name),
-                silo_name,
-            )
-            if extracted_hostname and _should_replace_hostname(hostname, extracted_hostname):
-                hostname = extracted_hostname
-                context["hostname"] = hostname
-                _save_context(self.screenshots_dir, context)
-                _refresh_existing_screenshot_overlays(
-                    self.screenshots_dir,
-                    silo_name,
-                    hostname,
-                )
-            elif extracted_hostname:
-                _refresh_existing_screenshot_overlays(
-                    self.screenshots_dir,
-                    silo_name,
-                    extracted_hostname,
-                )
         return hostname or "Unknown"
 
 
@@ -144,9 +148,12 @@ def apply_hostname_overlay_override(
         return ""
 
     context = _load_context(screenshots_dir)
+    stored_hostname = str(context.get("hostname") or "").strip()
+    normalized_stored_hostname = _normalize_hostname_for_silo(stored_hostname, silo_name)
     context["hostname"] = normalized_hostname
     _save_context(screenshots_dir, context)
-    _refresh_existing_screenshot_overlays(screenshots_dir, silo_name, normalized_hostname)
+    if normalized_hostname != normalized_stored_hostname:
+        _refresh_existing_screenshot_overlays(screenshots_dir, silo_name, normalized_hostname)
 
     if screenshot_path.exists():
         try:
@@ -194,7 +201,7 @@ def _apply_overlay(
     margin = 18
     rect_width = text_width + (padding_x * 2)
     if cover_existing:
-        rect_width = min(max(width - (margin * 2), rect_width), max(rect_width, 520))
+        rect_width = min(width - (margin * 2), max(rect_width, 760))
     rect_height = sum(line_heights) + gap + (padding_y * 2)
     taskbar_clearance = max(82, height // 13)
     left = max(margin, width - rect_width - margin)
@@ -205,7 +212,7 @@ def _apply_overlay(
     draw.rounded_rectangle(
         (left, top, right, bottom),
         radius=6,
-        fill=(0, 0, 0, 178),
+        fill=(0, 0, 0, 255 if cover_existing else 178),
     )
     y = top + padding_y
     for line, line_height in zip(lines, line_heights):
@@ -358,17 +365,42 @@ def _looks_like_terminal_hostname(value: str) -> bool:
         return False
     if not _looks_like_citrix_hostname(value):
         return False
-    return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{5,31}", value))
+    return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{2,62}", value))
 
 
 def _looks_like_citrix_hostname(value: str, silo_name: str = "") -> bool:
     normalized = (value or "").strip().upper()
-    if not re.fullmatch(r"[A-Z0-9]{3,12}RW\d{2}-[A-Z0-9][A-Z0-9._-]{1,31}", normalized):
+    if not _looks_like_windows_hostname(normalized):
+        return False
+    if "-" not in normalized and not re.search(r"RW\d{2}", normalized):
         return False
     silo_number = _silo_number_from_name(silo_name)
     if silo_number and f"RW{silo_number}-" not in normalized:
         return False
-    return True
+    return bool(
+        re.search(r"RW\d{2}-[A-Z0-9]", normalized)
+        or normalized.startswith(("VTA", "VTE", "VTN", "VPD", "SILO"))
+    )
+
+
+def _looks_like_windows_hostname(value: str) -> bool:
+    normalized = (value or "").strip().upper()
+    if not re.fullmatch(r"[A-Z0-9](?:[A-Z0-9-]{1,61}[A-Z0-9])?", normalized):
+        return False
+    if len(normalized) < 3 or len(normalized) > 63:
+        return False
+    if normalized.isdigit():
+        return False
+    if not any(char.isdigit() for char in normalized) and "-" not in normalized:
+        return False
+    blocked_words = {
+        "HOSTNAME",
+        "IPCONFIG",
+        "WINDOWS",
+        "CONFIGURATION",
+        "UNKNOWN",
+    }
+    return normalized not in blocked_words
 
 
 def _hostname_candidate_score(value: str) -> tuple[int, int, int]:
@@ -388,24 +420,38 @@ def _should_replace_hostname(current: str, candidate: str) -> bool:
 
 
 def _normalize_hostname_for_silo(value: str, silo_name: str = "") -> str:
-    candidate = re.sub(r"[^A-Za-z0-9._-]", "", (value or "").strip()).upper()
-    if not candidate:
+    raw_value = _normalize_hostname_separators(value).strip().upper()
+    if not raw_value:
         return ""
 
+    tokens = re.findall(r"[A-Z0-9][A-Z0-9-]{1,62}", raw_value)
+    if not tokens:
+        compact = re.sub(r"[^A-Z0-9-]", "", raw_value)
+        tokens = [compact] if compact else []
+
+    normalized_tokens: list[str] = []
+    for token in tokens:
+        candidate = _normalize_hostname_token(token)
+        if _looks_like_citrix_hostname(candidate, silo_name):
+            normalized_tokens.append(candidate)
+
+    if normalized_tokens:
+        return max(normalized_tokens, key=_hostname_candidate_score)
+
+    candidate = _normalize_hostname_token(re.sub(r"[^A-Z0-9-]", "", raw_value))
     silo_number = _silo_number_from_name(silo_name)
-    if candidate.startswith("YFLA1RW"):
-        candidate = "VTA1RW" + candidate[len("YFLA1RW") :]
+    candidate = re.sub(r"^YFLA(\d+)RW", r"VTA\1RW", candidate)
 
     if _looks_like_citrix_hostname(candidate, silo_name):
         return candidate
 
-    embedded_match = re.search(r"(?P<host>[A-Z0-9]{3,12}RW\d{2}-[A-Z0-9][A-Z0-9._-]{1,31})", candidate)
+    embedded_match = re.search(r"(?P<host>[A-Z0-9]{3,12}RW\d{2}-[A-Z0-9][A-Z0-9-]{1,31})", candidate)
     if embedded_match:
-        embedded = embedded_match.group("host")
+        embedded = _normalize_hostname_token(embedded_match.group("host"))
         if _looks_like_citrix_hostname(embedded, silo_name):
             return embedded
 
-    suffix_match = re.search(r"RW(?P<silo>\d{2})-(?P<tail>[A-Z0-9][A-Z0-9._-]{1,31})", candidate)
+    suffix_match = re.search(r"RW(?P<silo>\d{2})-(?P<tail>[A-Z0-9][A-Z0-9-]{1,31})", candidate)
     if suffix_match:
         matched_silo = suffix_match.group("silo")
         tail = suffix_match.group("tail")
@@ -418,12 +464,36 @@ def _normalize_hostname_for_silo(value: str, silo_name: str = "") -> str:
     return ""
 
 
+def _normalize_hostname_token(value: str) -> str:
+    candidate = _normalize_hostname_separators(value).strip().upper()
+    candidate = re.sub(r"[^A-Z0-9-]", "", candidate)
+    if not candidate:
+        return ""
+    candidate = re.sub(r"^YFLA(\d+)RW", r"VTA\1RW", candidate)
+    return re.sub(r"^([A-Z]{3})I(?=RW\d{2}-)", r"\g<1>1", candidate)
+
+
+def _normalize_hostname_separators(value: str) -> str:
+    return (
+        (value or "")
+        .replace("\u2010", "-")
+        .replace("\u2011", "-")
+        .replace("\u2012", "-")
+        .replace("\u2013", "-")
+        .replace("\u2014", "-")
+        .replace("\u2212", "-")
+    )
+
+
 def _silo_number_from_name(silo_name: str) -> str:
     match = re.search(r"SIL[O0](\d{2})", silo_name or "", re.IGNORECASE)
     return match.group(1) if match else ""
 
 
 def _hostname_prefix_for_silo(silo_number: str, silo_name: str = "") -> str:
+    ap_match = re.search(r"-AP(\d+)\b", silo_name or "", re.IGNORECASE)
+    if ap_match:
+        return f"VTA{ap_match.group(1)}"
     if silo_number == "07" or "-AP" in (silo_name or "").upper():
         return "VTA1"
     return "VTE1"
@@ -581,7 +651,7 @@ def _mask_distance(left: tuple[bool, ...], right: tuple[bool, ...]) -> float:
 
 
 def _parse_hostname_from_console_text(text: str) -> str:
-    normalized = text.replace("\r\n", "\n")
+    normalized = _normalize_hostname_separators(text).replace("\r\n", "\n")
     match = re.search(r">\s*hostname\s*\n+\s*([A-Za-z0-9][A-Za-z0-9._-]{1,63})", normalized, re.IGNORECASE)
     if match:
         return match.group(1).strip()
@@ -596,6 +666,19 @@ def _parse_hostname_from_console_text(text: str) -> str:
         for candidate in lines:
             if _looks_like_hostname(candidate):
                 return candidate
+    before_ipconfig = re.split(
+        r"\b(?:Windows\s+IP\s+Configuration|Ethernet\s+adapter|IPv4\s+Address)\b",
+        normalized,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    match = re.search(
+        r"\b[A-Za-z0-9]{2,12}RW\d{2}-[A-Za-z0-9][A-Za-z0-9._-]{1,31}\b",
+        before_ipconfig,
+        re.IGNORECASE,
+    )
+    if match:
+        return match.group(0).strip()
     return ""
 
 

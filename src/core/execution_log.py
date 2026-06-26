@@ -23,6 +23,7 @@ class ExecutionLog:
     error: dict[str, str] | None = None
     screenshot: str | None = None
     evidence_screenshots: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
     log_path: Path | None = None
 
     def add_step(self, message: str, level: str = "INFO") -> None:
@@ -46,6 +47,7 @@ class ExecutionLog:
         status: str,
         screenshot: Path | None = None,
         evidence_screenshots: list[Path] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> Path:
         self.status = status
         self.end_time = datetime.now()
@@ -53,6 +55,8 @@ class ExecutionLog:
             self.screenshot = str(screenshot)
         if evidence_screenshots is not None:
             self.evidence_screenshots = [str(path) for path in evidence_screenshots]
+        if metadata is not None:
+            self.metadata = dict(metadata)
         self.log_path = self._write()
         return self.log_path
 
@@ -79,6 +83,7 @@ class ExecutionLog:
             "error": self.error,
             "screenshot": self.screenshot,
             "evidence_screenshots": self.evidence_screenshots,
+            "metadata": self.metadata,
         }
 
 

@@ -1,22 +1,55 @@
 {
+  "runtime_profile": {
+    "mode": "normal",
+    "profiles": {
+      "fast": {
+        "label": "Fast",
+        "multiplier": 0.75,
+        "minimum_wait_sec": 0.5,
+        "minimum_unscaled_wait_sec": 1.0,
+        "excluded_wait_keys": [
+          "citrix_typing_interval_sec",
+          "web_consent_tab_interval_sec",
+          "screenshot_settle_sec",
+          "notification_guard_wait_sec",
+          "cmd_copy_wait_sec"
+        ]
+      },
+      "normal": {
+        "label": "Normal",
+        "multiplier": 1.0,
+        "minimum_wait_sec": 0.5,
+        "minimum_unscaled_wait_sec": 0.0,
+        "excluded_wait_keys": []
+      },
+      "safe": {
+        "label": "Safe",
+        "multiplier": 1.25,
+        "minimum_wait_sec": 0.5,
+        "minimum_unscaled_wait_sec": 0.0,
+        "excluded_wait_keys": []
+      }
+    }
+  },
   "waits": {
     "default_action_wait_sec": 0.5,
     "after_click_wait_sec": 1.0,
     "after_type_wait_sec": 0.4,
-    "after_hotkey_wait_sec": 1.0,
+    "after_hotkey_wait_sec": 0.8,
     "local_desktop_focus_wait_sec": 0.5,
     "citrix_activation_wait_sec": 4.0,
     "citrix_focus_click_wait_sec": 1.0,
     "run_dialog_wait_sec": 1.5,
     "windows_search_wait_sec": 2.0,
-    "windows_search_results_wait_sec": 5.0,
-    "web_page_load_wait_sec": 5.0,
+    "windows_search_results_wait_sec": 4.0,
+    "web_page_load_wait_sec": 4.0,
+    "web_direct_launch_wait_sec": 4.0,
     "web_after_maximize_wait_sec": 2.0,
-    "edge_search_results_wait_sec": 15.0,
-    "edge_launch_wait_sec": 10.0,
-    "edge_settings_page_wait_sec": 10.0,
+    "edge_search_results_wait_sec": 10.0,
+    "edge_launch_wait_sec": 8.0,
+    "edge_settings_page_wait_sec": 7.0,
     "edge_profile_signin_wait_sec": 15.0,
-    "edge_about_page_wait_sec": 15.0,
+    "edge_about_page_wait_sec": 8.0,
     "edge_policy_page_wait_sec": 5.0,
     "edge_policy_scroll_wait_sec": 2.0,
     "edge_close_wait_sec": 2.0,
@@ -29,6 +62,12 @@
     "explorer_after_maximize_wait_sec": 2.0,
     "applist_search_results_wait_sec": 6.0,
     "applist_search_result_click_wait_sec": 0.5,
+    "applist_search_result_tab_interval_sec": 1.0,
+    "applist_search_result_select_wait_sec": 1.0,
+    "applist_search_result_after_tabs_wait_sec": 1.0,
+    "applist_search_result_after_space_wait_sec": 2.0,
+    "applist_search_result_after_enter_wait_sec": 1.0,
+    "applist_search_result_double_click_wait_sec": 2.0,
     "applist_open_wait_sec": 5.0,
     "applist_notepad_after_maximize_wait_sec": 2.0,
     "applist_find_dialog_wait_sec": 1.0,
@@ -39,8 +78,8 @@
     "onedrive_search_ui_wait_sec": 5.0,
     "onedrive_search_results_wait_sec": 10.0,
     "onedrive_explorer_open_wait_sec": 5.0,
-    "onedrive_sync_search_results_wait_sec": 15.0,
-    "onedrive_sync_explorer_open_wait_sec": 10.0,
+    "onedrive_sync_search_results_wait_sec": 10.0,
+    "onedrive_sync_explorer_open_wait_sec": 4.0,
     "onedrive_sync_after_maximize_wait_sec": 2.0,
     "onedrive_sync_explorer_close_wait_sec": 2.0,
     "onedrive_new_folder_name_wait_sec": 1.0,
@@ -58,49 +97,66 @@
     "winver_close_wait_sec": 1.0,
     "fslogix_profile_logs_open_wait_sec": 5.0,
     "fslogix_log_select_wait_sec": 0.5,
-    "fslogix_notepad_open_wait_sec": 10.0,
+    "fslogix_notepad_open_wait_sec": 4.0,
     "fslogix_notepad_after_maximize_wait_sec": 1.0,
     "fslogix_find_dialog_wait_sec": 1.0,
     "fslogix_find_result_wait_sec": 2.0,
     "fslogix_notepad_close_wait_sec": 1.0,
     "fslogix_explorer_close_wait_sec": 1.0,
-    "temp_folder_open_wait_sec": 10.0,
+    "temp_folder_open_wait_sec": 4.0,
     "temp_folder_explorer_close_wait_sec": 2.0,
-    "shakedown_between_tests_wait_sec": 5.0,
+    "shakedown_between_tests_wait_sec": 2.0,
     "shakedown_cleanup_confirm_wait_sec": 2.0,
-    "complete_phase_transition_wait_sec": 5.0,
+    "complete_phase_transition_wait_sec": 2.0,
     "complete_cleanup_confirm_wait_sec": 2.0,
-    "iat_programs_features_open_wait_sec": 10.0,
+    "iat_programs_features_open_wait_sec": 8.0,
     "iat_find_focus_wait_sec": 1.0,
-    "iat_search_result_wait_sec": 5.0,
+    "iat_search_result_wait_sec": 2.0,
     "iat_programs_features_close_wait_sec": 2.0,
-    "mandatory_between_tests_wait_sec": 5.0,
+    "mandatory_between_tests_wait_sec": 2.0,
     "google_after_permission_wait_sec": 5.0,
-    "google_before_capture_wait_sec": 10.0,
+    "google_before_capture_wait_sec": 6.0,
     "yahoo_after_permission_wait_sec": 5.0,
-    "yahoo_before_capture_wait_sec": 10.0,
+    "yahoo_before_capture_wait_sec": 6.0,
     "cleanup_short_wait_sec": 2.0,
     "cleanup_medium_wait_sec": 3.0,
-    "zscaler_launch_wait_sec": 20.0,
+    "zscaler_launch_wait_sec": 4.0,
+    "zscaler_status_poll_timeout_sec": 18.0,
+    "zscaler_post_complete_reuse_poll_timeout_sec": 4.0,
+    "zscaler_post_complete_ready_poll_timeout_sec": 10.0,
+    "zscaler_status_poll_interval_sec": 1.0,
     "office_between_launch_wait_sec": 2.0,
     "office_load_wait_sec": 30.0,
-    "office_single_app_load_wait_sec": 15.0,
+    "office_single_app_load_wait_sec": 12.0,
     "office_account_page_wait_sec": 4.0,
     "office_about_dialog_wait_sec": 4.0,
     "office_switch_wait_sec": 3.0,
     "office_after_maximize_wait_sec": 2.0,
     "office_account_retry_wait_sec": 1.0,
-    "office_after_close_wait_sec": 3.0,
+    "office_after_close_wait_sec": 2.0,
     "office_privacy_popup_after_close_wait_sec": 2.0,
     "office_post_launch_dialog_after_enter_wait_sec": 15.0,
+    "office_activate_product_wait_sec": 15.0,
     "cmd_launch_wait_sec": 3.0,
+    "edge_command_output_wait_sec": 5.0,
+    "webview_command_output_wait_sec": 5.0,
+    "silo43_oracle_path_output_wait_sec": 3.0,
+    "silo43_between_tests_wait_sec": 2.0,
+    "silo43_vls_launch_wait_sec": 30.0,
+    "silo43_vls_post_capture_wait_sec": 0.5,
+    "silo43_vls_second_popup_wait_sec": 10.0,
+    "silo43_vls_after_close_wait_sec": 2.0,
+    "silo43_ping_output_wait_sec": 8.0,
+    "silo43_bad_folder_open_wait_sec": 5.0,
+    "silo43_bad_folder_after_maximize_wait_sec": 2.0,
+    "silo43_bad_folder_close_wait_sec": 2.0,
     "after_hostname_command_wait_sec": 2.0,
     "after_ipconfig_enter_wait_sec": 3.0,
     "after_hostname_enter_wait_sec": 1.5,
     "cmd_copy_wait_sec": 0.5,
     "citrix_screen_settle_sec": 2.0,
-    "screenshot_settle_sec": 0.8,
-    "notification_guard_wait_sec": 0.8
+    "screenshot_settle_sec": 0.6,
+    "notification_guard_wait_sec": 0.5
   },
   "paths": {
     "test_cases_dir": "test_cases",
@@ -111,12 +167,44 @@
     "max_items": 5,
     "file": "%USERPROFILE%/Documents/CitrixTestAutomationRunner/config/desktop_history.json"
   },
+  "ui": {
+    "max_log_lines": 2500
+  },
   "screenshots": {
     "capture_on_pass": true,
     "capture_on_fail": true,
     "copy_pass_screenshot_to_clipboard": true,
     "copy_fail_screenshot_to_clipboard": false,
     "suppress_local_notifications": true
+  },
+  "ai_validation": {
+    "enabled": true,
+    "hostname_ip_enabled": true,
+    "fallback_enabled": true,
+    "fallback_testcases": {
+      "Edge_WebView_Version_Evidence": true,
+      "Edge_Browser_Version_Evidence": true,
+      "Zscaler_Services_Evidence": true,
+      "Google_and_Yahoo_Web_Access_Evidence": true,
+      "Office_Applications_Launch": true,
+      "Applist_Validation_Evidence": true,
+      "Shakedown_Desktop_Availability_Evidence": true,
+      "Shakedown_OneDrive_Sync_Evidence": true,
+      "Shakedown_Edge_Sync_Evidence": true,
+      "Shakedown_Edge_Policy_PAC_Evidence": true,
+      "Shakedown_Windows_Version_Evidence": true,
+      "Shakedown_Local_Network_Drives_Evidence": true,
+      "Shakedown_FSLogix_Profile_Log_Evidence": true,
+      "Shakedown_Temp_Folder_Evidence": true,
+      "IAT_Core_Application_Test_Evidence": true
+    },
+    "model": "gpt-4.1-mini",
+    "endpoint": "https://api.openai.com/v1/responses",
+    "curl_ssl_no_revoke": true,
+    "timeout_sec": 90,
+    "hostname_ip_max_attempts": 1,
+    "max_output_tokens": 320,
+    "image_detail": "low"
   },
   "pyautogui": {
     "pause_sec": 0.1,
@@ -140,16 +228,14 @@
     },
     "post_launch_dialog_handlers": {
       "SILO43": {
-        "excel": {
+        "powerpoint": {
           "enabled": true,
           "tab_presses": 1
         }
       }
     },
     "account_click_retries": {
-      "word": 2,
-      "powerpoint": 1,
-      "excel": 1
+      "powerpoint": 1
     },
     "about_click": {
       "x": 1010,
@@ -195,16 +281,8 @@
       "blue_ratio_min": 0.08
     },
     "taskbar": {
-      "word": {
-        "x_ratio": 0.697,
-        "y_ratio": 0.96
-      },
       "powerpoint": {
         "x_ratio": 0.654,
-        "y_ratio": 0.96
-      },
-      "excel": {
-        "x_ratio": 0.611,
         "y_ratio": 0.96
       }
     }
@@ -253,11 +331,12 @@
   },
   "edge_sync_detection": {
     "signin_blue_ratio_min": 0.02,
+    "signin_dark_ratio_min": 0.015,
     "signin_region": [
-      1080,
-      585,
-      300,
-      70
+      1000,
+      600,
+      450,
+      140
     ],
     "signin_fallback_click": {
       "x": 1210,
@@ -265,9 +344,21 @@
     }
   },
   "applist_evidence": {
+    "open_result_tab_count": 4,
+    "open_result_double_click": {
+      "x": 535,
+      "y": 232
+    },
     "search_result_click": {
       "x": 535,
       "y": 232
     }
+  },
+  "schedule_presets": {
+    "Ring 0": [
+      "SILO25-RING0 - Desktop Viewer",
+      "SILO26-RING0 - Desktop Viewer",
+      "SILO27-RING0 - Desktop Viewer"
+    ]
   }
 }

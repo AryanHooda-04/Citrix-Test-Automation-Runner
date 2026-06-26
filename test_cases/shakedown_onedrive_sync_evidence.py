@@ -1,7 +1,7 @@
 TEST_CASE = {
     "id": "TC_009_SHAKEDOWN_ONEDRIVE_SYNC",
     "name": "Shakedown_OneDrive_Sync_Evidence",
-    "description": "Opens OneDrive from Windows Search and captures sync availability evidence.",
+    "description": "Opens the OneDrive File Explorer path and captures sync availability evidence.",
     "evidence_name": "onedrive_sync",
     "capture_screenshot": False,
 }
@@ -22,18 +22,17 @@ def run(ctx):
     ctx.step("Step 2: Ensure Citrix input focus with a center-screen click")
     ctx.click_screen_center(wait_after_sec=ctx.config.wait("citrix_focus_click_wait_sec", 1.0))
 
-    ctx.step("Step 3: Open Windows Search using Windows + S")
-    ctx.hotkey("winleft", "s")
-    ctx.wait(ctx.config.wait("windows_search_wait_sec", 2.0))
+    ctx.step("Step 3: Open OneDrive folder directly via Run")
+    ctx.hotkey("winleft", "r")
+    ctx.wait(ctx.config.wait("run_dialog_wait_sec", 1.5))
 
-    ctx.step("Step 4: Launch OneDrive from Windows Search")
+    ctx.step("Step 4: Launch OneDrive File Explorer path")
     ctx.type_text(
-        "Apps: OneDrive",
+        'explorer "%UserProfile%\\OneDrive - Allianz"',
         interval=ctx.config.wait("citrix_typing_interval_sec", 0.15),
     )
-    ctx.wait(ctx.config.wait("onedrive_sync_search_results_wait_sec", 15.0))
     ctx.press("enter")
-    ctx.wait(ctx.config.wait("onedrive_sync_explorer_open_wait_sec", 10.0))
+    ctx.wait(ctx.config.wait("onedrive_sync_explorer_open_wait_sec", 4.0))
 
     ctx.step("Step 5: Maximize OneDrive File Explorer window")
     ctx.maximize_active_window()

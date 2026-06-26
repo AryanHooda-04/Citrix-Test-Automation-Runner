@@ -50,6 +50,6 @@ def run(ctx):
     ctx.step(f"Step 7: Execute Edge browser version command: {EDGE_BROWSER_COMMAND}")
     ctx.type_text(EDGE_BROWSER_COMMAND, interval=0.15)
     ctx.press("enter")
-    ctx.wait(3.0)
+    ctx.wait(ctx.config.wait("edge_command_output_wait_sec", 5.0))
 
     ctx.step("Step 8: Command render wait completed. Runner will capture and copy the final screenshot.")

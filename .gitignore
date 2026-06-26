@@ -9,3 +9,5 @@ release/
 evidence/logs/*.json
 evidence/screenshots/*.png
 config/desktop_history.json
+openai_vision_probe.json
+*.env

@@ -1,51 +1,40 @@
 # Citrix Test Automation Runner
 
-Windows desktop application for manual testers who run UI-only automation on Citrix desktops and need screenshots copied straight into Word evidence documents.
+Internal Windows desktop application for running Citrix evidence automation, validating screenshots, and generating Word evidence reports.
 
-## Architecture
+Current version: `2.0.0`
 
-The application is split into small responsibilities:
+## What It Does
 
-- `run_app.py` starts the Tkinter Windows GUI.
-- `src/gui/main_window.py` renders test case buttons, status indicators, and live execution messages.
-- `src/core/test_loader.py` discovers test scripts dynamically from `test_cases/`.
-- `src/core/runner.py` executes one selected test case, records pass/fail, and triggers evidence capture.
-- `src/core/automation_context.py` exposes safe keyboard/mouse helper methods around PyAutoGUI and configurable waits.
-- `src/core/screenshot.py` captures screenshots and copies them to the Windows clipboard as an image.
-- `src/core/execution_log.py` writes structured JSON logs per execution.
-- `src/core/config.py` loads wait times and local output paths from `config/config.json`.
+- Runs mandatory, shakedown, IAT, post-complete Zscaler, and Silo 43 specific evidence checks.
+- Supports individual testcase runs, selected testcase runs, rerun failed, skip, pause, and stop controls.
+- Captures desktop-scoped screenshots with Silo and Hostname overlay.
+- Stores evidence under a desktop-specific folder so multiple silos do not overwrite each other.
+- Generates and refreshes Word evidence reports from the latest valid screenshots.
+- Provides evidence preview and failed-test recovery panels inside the app.
+- Supports configurable evidence root location.
+- Includes OCR validation and OpenAI Vision fallback validation for screenshots that need extra reliability.
 
-Automation is intentionally keyboard/mouse based so it can work against Citrix sessions where object-level automation is unavailable.
-
-## Folder Structure
+## Main Components
 
 ```text
-.
-|-- config/
-|   `-- config.json
-|-- evidence/
-|   `-- Citrix_Desktop_Name/
-|       |-- logs/
-|       `-- screenshots/
-|-- src/
-|   |-- core/
-|   |   |-- automation_context.py
-|   |   |-- config.py
-|   |   |-- execution_log.py
-|   |   |-- runner.py
-|   |   |-- screenshot.py
-|   |   `-- test_loader.py
-|   `-- gui/
-|       `-- main_window.py
-|-- test_cases/
-|   `-- sample_citrix_login.py
-|-- requirements.txt
-`-- run_app.py
+run_app.py                         App entry point
+config/config.json                 Waits, paths, runtime mode, validation settings
+src/gui/main_window.py             CustomTkinter UI and user workflow controls
+src/core/runner.py                 Individual testcase execution and validation flow
+src/core/master_runner.py          Mandatory, shakedown, complete, and scheduled execution
+src/core/screenshot.py             Screenshot capture, overlay, and clipboard handling
+src/core/word_report.py            Word report generation
+src/core/ocr_validation.py         OCR validation helpers
+src/core/windows_ocr.py            Windows OCR integration
+src/core/ai_validation.py          OpenAI Vision fallback validation
+src/core/openai_settings.py        Local OpenAI API key management
+test_cases/                        UI automation test scripts
 ```
 
-## Setup
+## Setup For Development
 
-Use Python 3.10 or newer on Windows.
+Use Python 3.13 on Windows.
 
 ```powershell
 python -m venv .venv
@@ -54,148 +43,118 @@ pip install -r requirements.txt
 python run_app.py
 ```
 
-## Configuration
+If PowerShell blocks activation scripts, launch a normal PowerShell as allowed by your endpoint policy or run Python directly from the virtual environment.
 
-Wait times are controlled in `config/config.json`.
+## Running The App
 
-```json
-{
-  "waits": {
-    "default_action_wait_sec": 0.5,
-    "after_click_wait_sec": 1.0,
-    "after_type_wait_sec": 0.4,
-    "after_hotkey_wait_sec": 1.0,
-    "citrix_screen_settle_sec": 2.0,
-    "screenshot_settle_sec": 0.8
-  }
-}
-```
+1. Open the required Citrix Desktop Viewer session.
+2. Enter or select the exact Citrix Desktop Viewer title in **Citrix Desktop Name**.
+3. Choose one of:
+   - **Run All** under Perform Complete Testing
+   - **Run All Mandatory Testcases**
+   - **Run All Shakedown Testcases**
+   - Individual testcase **Run**
+   - **Run Selected**
+4. Review progress, logs, and evidence from the right-side monitor panel.
 
-Test scripts should call the helper waits from `ctx` instead of using hardcoded `time.sleep`.
+## Evidence Output
 
-## Adding A Test Case
-
-Create a new Python file in `test_cases/` and expose a `TEST_CASE` dictionary plus a `run(ctx)` function.
-
-```python
-TEST_CASE = {
-    "id": "TC_002",
-    "name": "Open Customer Search",
-    "description": "Opens the customer search screen from the Citrix application."
-}
-
-def run(ctx):
-    ctx.step("Bring Citrix session into focus")
-    ctx.hotkey("alt", "tab")
-
-    ctx.step("Open customer search")
-    ctx.hotkey("ctrl", "f")
-    ctx.type_text("Smith")
-    ctx.press("enter")
-
-    ctx.wait_for_citrix()
-```
-
-After saving the file, restart the app or click `Refresh`. The test appears as a new button automatically.
-
-## Included Hostname Test
-
-`test_cases/hostname_validation.py` adds the `Hostname_Validation` button. It looks for the local Citrix Desktop Viewer window containing `VPDW-LQ7W7LR - Desktop Viewer`, activates it, clicks the center of the Citrix session, opens the Run dialog with `Windows + R`, starts Command Prompt, runs `hostname`, verifies copied CMD text contains output after the command, and then lets the runner capture:
+Default evidence root:
 
 ```text
-evidence/Citrix_Desktop_Name/screenshots/Hostname_Validation_Pass_YYYYMMDD_HHMMSS.png
+%USERPROFILE%\Documents\CitrixTestAutomationRunner\evidence
 ```
 
-If the Citrix Viewer window is not found, the test is marked `Fail`, a failure log is written, and a failure screenshot is captured when configured.
-
-`test_cases/hostname_and_ip_evidence.py` adds the `Hostname_and_IP_Evidence` button. The tester enters the Citrix desktop title in the `Citrix Desktop Name` field before running. The test activates a Citrix Viewer window whose title contains that value, opens Command Prompt through `Windows + R`, runs `hostname` without validation, runs `ipconfig`, waits for the IP information to render, and then captures:
+Each desktop gets its own folder:
 
 ```text
-evidence/Citrix_Desktop_Name/screenshots/Hostname_and_IP_Evidence_Pass_YYYYMMDD_HHMMSS.png
+evidence\<Citrix Desktop Name>\
+|-- logs\
+|-- screenshots\
+|   |-- Mandatory Evidence\
+|   |-- Shakedown Evidence\
+|   |-- IAT Evidence\
+|   `-- Silo 43 Evidence\
+`-- run_manifest.json
 ```
 
-`test_cases/edge_webview_version_evidence.py` adds the `Edge_WebView_Version_Evidence` button. It uses the entered `Citrix Desktop Name` to activate a Citrix Viewer window whose title contains that value, opens Command Prompt, starts PowerShell inside it, runs the Edge WebView registry command, verifies output is visible, and captures:
+The app can also use a custom evidence root selected from the UI.
+
+## Validation Flow
+
+Screenshot validation is layered:
+
+1. Capture screenshot.
+2. Apply Silo and Hostname overlay.
+3. Run OCR validation where available.
+4. If OCR is inconclusive and AI fallback is enabled, call OpenAI Vision validation.
+5. Retry only where the testcase flow supports retry.
+6. Save final pass/fail evidence and update the run manifest.
+
+The app uses Windows OCR packages for local OCR and OpenAI only as fallback when configured.
+
+## OpenAI API Key
+
+The OpenAI key is not stored in the repository or release package.
+
+Lookup order:
+
+1. `OPENAI_API_KEY` environment variable.
+2. User-local saved key from the app.
+3. Optional config value if explicitly added by an operator.
+
+To update an expired key in the packaged app:
+
+1. Launch the app.
+2. Click **AI Key** in the header.
+3. Paste the new key.
+4. Click **Save Key**.
+
+The key is saved locally under the Windows user profile:
 
 ```text
-evidence/Citrix_Desktop_Name/screenshots/webview_evidence_Pass_YYYYMMDD_HHMMSS.png
+%APPDATA%\CitrixTestAutomationRunner\openai_settings.json
 ```
 
-`test_cases/edge_browser_version_evidence.py` adds the `Edge_Browser_Version_Evidence` button. It follows the same Citrix and PowerShell flow, runs the Microsoft Edge browser registry command, waits for output to render, and captures:
+## Silo 43 Specific Testcases
+
+Silo 43 specific checks are only intended for Silo 43 desktops:
+
+- Oracle 12 bin path
+- Nice Env Variables
+- `C:\apps\vls`
+- Ping `prod.dvfs.com`
+- `C:\BAD` folder
+
+The app blocks these testcases with a user-facing error popup when the selected desktop is not a Silo 43 desktop.
+
+## Packaging
+
+Build a release package with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_release.ps1 -Version 2.0.0
+```
+
+Generated artifacts:
 
 ```text
-evidence/Citrix_Desktop_Name/screenshots/edge_evidence_Pass_YYYYMMDD_HHMMSS.png
+release\Citrix_Test_Automation_Runner_v2.0.0\
+release\Citrix_Test_Automation_Runner_v2.0.0.zip
 ```
 
-`test_cases/zscaler_services_evidence.py` adds the `Zscaler_Services_Evidence` button. It activates the entered Citrix desktop, opens Windows Search, launches `ZCCVDI`, waits for the application UI to load, and captures:
+The release includes the executable, config, test cases, quick-start documentation, and version file.
 
-```text
-evidence/Citrix_Desktop_Name/screenshots/zscaler_evidence_Pass_YYYYMMDD_HHMMSS.png
-```
+## Git Safety
 
-`test_cases/office_applications_launch.py` adds the `Office_Applications_Launch` button. It activates the entered Citrix desktop, then handles each app independently: launch Word, maximize, capture Account > About evidence, close Word; repeat for PowerPoint and Excel.
+Do not commit:
 
-`test_cases/google_and_yahoo_web_access_evidence.py` adds the `Google_and_Yahoo_Web_Access_Evidence` button. It activates the entered Citrix desktop, opens `google.com` and `yahoo.com` through Windows Search/Edge, handles consent prompts through Tab/Enter keyboard navigation, and captures `google_evidence` and `yahoo_evidence` screenshots.
+- `release/`
+- `dist/`
+- `build/`
+- evidence screenshots or logs
+- local desktop history
+- OpenAI probe files
+- API keys or secrets
 
-`test_cases/applist_validation_evidence.py` adds the `Applist_Validation_Evidence` button. It opens `C:\Temp` in File Explorer, searches for `Applist`, clicks the configured first-result coordinate in the maximized Explorer window, opens the result, searches inside the file for `NOT OK`, and captures `applist_evidence`.
-
-## GUI Button-To-Script Mapping
-
-The GUI calls `discover_test_cases()` in `src/core/test_loader.py`. Each valid script in `test_cases/` becomes one button using:
-
-- Button text: `TEST_CASE["name"]`
-- Execution target: the script module's `run(ctx)` function
-- Status row: `Idle`, `Running`, `Pass`, or `Fail`
-
-## Screenshot And Clipboard Evidence
-
-Evidence files are grouped under a desktop-specific folder derived from the `Citrix Desktop Name` entered before the run. For example, `SILO27-TEST - Desktop Viewer` is stored under `evidence/SILO27-TEST___Desktop_Viewer/`.
-
-On pass, the runner captures the full screen after the Citrix settle wait and saves:
-
-```text
-evidence/Citrix_Desktop_Name/screenshots/TestCaseName_Pass_YYYYMMDD_HHMMSS.png
-```
-
-It also copies the image to the Windows clipboard, so the tester can open Word and press `Ctrl+V`.
-
-On failure, the runner writes error details to the log and, when enabled, captures:
-
-```text
-evidence/Citrix_Desktop_Name/screenshots/TestCaseName_Fail_YYYYMMDD_HHMMSS.png
-```
-
-Pass and fail evidence files use different names and are never overwritten.
-
-## Logging
-
-Each execution writes one JSON file in `evidence/Citrix_Desktop_Name/logs/`.
-
-Example:
-
-```json
-{
-  "test_case": "Sample Citrix Login",
-  "status": "Pass",
-  "start_time": "2026-04-30T14:38:11",
-  "end_time": "2026-04-30T14:38:24",
-  "duration_seconds": 13.2,
-  "steps": [
-    {
-      "timestamp": "2026-04-30T14:38:12",
-      "level": "INFO",
-      "message": "Bring Citrix session into focus"
-    }
-  ],
-  "error": null,
-  "screenshot": "evidence/Citrix_Desktop_Name/screenshots/Sample_Citrix_Login_Pass_20260430_143824.png"
-}
-```
-
-## Citrix Reliability Notes
-
-- Keep scripts action-oriented and close to manual steps.
-- Prefer keyboard shortcuts over coordinates where possible.
-- Use `ctx.wait_for_citrix()` after screen transitions.
-- Use coordinates only when the Citrix app has no reliable keyboard path.
-- Increase waits in `config/config.json` for slower Citrix sessions.
-- Move the mouse to safe positions before clicks if popups or overlays are common.
+The app stores user-level runtime secrets outside the repository.

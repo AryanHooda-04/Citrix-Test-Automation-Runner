@@ -32,6 +32,7 @@ class AutomationContext:
     stop_event: Event | None = None
     pause_event: Event | None = None
     evidence_paths: list = field(default_factory=list)
+    metadata: dict[str, object] = field(default_factory=dict)
     citrix_window_rect: tuple[int, int, int, int] | None = None
     citrix_window_title: str | None = None
 
@@ -69,6 +70,164 @@ class AutomationContext:
         interruptible_sleep(seconds, self.stop_event, self.pause_event)
         self.check_stop()
 
+    def _active_window_title(self) -> str:
+        if pygetwindow is None:
+            return ""
+        try:
+            active_window = pygetwindow.getActiveWindow()
+        except Exception:
+            return ""
+        return (getattr(active_window, "title", "") or "").strip()
+
+    @staticmethod
+    def _window_title_matches(actual: str | None, expected: str | None) -> bool:
+        actual_key = (actual or "").strip().casefold()
+        expected_key = (expected or "").strip().casefold()
+        if not actual_key or not expected_key:
+            return False
+        return actual_key == expected_key or expected_key in actual_key or actual_key in expected_key
+
+    @staticmethod
+    def _window_area(window) -> int:
+        try:
+            return max(int(window.width), 0) * max(int(window.height), 0)
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _window_is_minimized(window) -> bool:
+        try:
+            return bool(window.isMinimized)
+        except Exception:
+            return False
+
+    def _matching_windows_by_title(self, title: str, exact: bool = False) -> list:
+        if pygetwindow is None:
+            raise RuntimeError("PyGetWindow is required. Install dependencies with: pip install -r requirements.txt")
+        title_key = title.strip().casefold()
+        if not title_key:
+            return []
+        matches = []
+        for window in pygetwindow.getAllWindows():
+            window_title = (getattr(window, "title", "") or "").strip()
+            if not window_title:
+                continue
+            window_key = window_title.casefold()
+            if exact:
+                is_match = window_key == title_key
+            else:
+                is_match = title_key in window_key or window_key in title_key
+            if is_match:
+                matches.append(window)
+        return matches
+
+    def _best_window_match(self, matches: list, entered_title: str):
+        entered_key = entered_title.strip().casefold()
+
+        def rank(window) -> tuple[int, int, int, int]:
+            window_title = (getattr(window, "title", "") or "").strip().casefold()
+            exact_rank = 0 if window_title == entered_key else 1
+            desktop_viewer_rank = 0 if "desktop viewer" in window_title else 1
+            minimized_rank = 1 if self._window_is_minimized(window) else 0
+            area_rank = -self._window_area(window)
+            return exact_rank, desktop_viewer_rank, minimized_rank, area_rank
+
+        return sorted(matches, key=rank)[0]
+
+    def _update_citrix_window_rect(self, window) -> None:
+        self.citrix_window_rect = (
+            int(window.left),
+            int(window.top),
+            int(window.width),
+            int(window.height),
+        )
+        self.citrix_window_title = (getattr(window, "title", "") or self.citrix_window_title or "").strip()
+
+    def _click_window_center_raw(self, window) -> None:
+        center_x = int(window.left) + max(int(window.width) // 2, 1)
+        center_y = int(window.top) + max(int(window.height) // 2, 1)
+        self.check_stop()
+        pyautogui.click(x=center_x, y=center_y, button="left")
+
+    def _activate_and_confirm_window(self, window, entered_title: str, reason: str) -> bool:
+        expected_title = (getattr(window, "title", "") or entered_title).strip()
+        last_active_title = ""
+        attempts = max(int(self.config.raw.get("citrix_focus_confirmation_attempts", 3)), 1)
+        retry_wait = float(self.config.raw.get("citrix_focus_confirmation_wait_sec", 0.35))
+
+        for attempt in range(1, attempts + 1):
+            active_title = self._active_window_title()
+            already_active = self._window_title_matches(active_title, expected_title) or self._window_title_matches(
+                active_title,
+                entered_title,
+            )
+
+            if already_active and not self._window_is_minimized(window):
+                self.log_step(f"Citrix window already active: {expected_title}", "INFO")
+            else:
+                if attempt == 1:
+                    self.log_step(f"Activate local window: {expected_title}", "INFO")
+                else:
+                    self.log_step(
+                        f"Retry Citrix focus confirmation ({attempt}/{attempts}) for: {expected_title}",
+                        "WARNING",
+                    )
+                if self._window_is_minimized(window):
+                    window.restore()
+                    self._sleep_interruptibly(0.2)
+                window.activate()
+                self._sleep_interruptibly(retry_wait)
+
+            self._update_citrix_window_rect(window)
+            self._click_window_center_raw(window)
+            self._sleep_interruptibly(0.25)
+
+            active_title = self._active_window_title()
+            last_active_title = active_title
+            if self._window_title_matches(active_title, expected_title) or self._window_title_matches(active_title, entered_title):
+                return already_active
+
+            self.log_step(
+                "Citrix focus not confirmed after activation attempt "
+                f"{attempt}/{attempts}. Active local window: {active_title or '<none>'}",
+                "WARNING",
+            )
+
+        message = (
+            f"Citrix desktop focus could not be confirmed before {reason}. "
+            f"Expected '{expected_title}', but active local window is "
+            f"'{last_active_title or '<none>'}'. Automation stopped to avoid running on the local system."
+        )
+        self.log_step(message, "ERROR")
+        raise RuntimeError(message)
+
+    def ensure_citrix_focus(self, reason: str = "automation input") -> None:
+        self.check_stop()
+        if pygetwindow is None or not self.citrix_window_title:
+            return
+        active_title = self._active_window_title()
+        if self._window_title_matches(active_title, self.citrix_window_title):
+            return
+
+        self.log_step(
+            "Citrix focus guard: active local window is "
+            f"'{active_title or '<none>'}' before {reason}; refocusing '{self.citrix_window_title}'.",
+            "WARNING",
+        )
+        matches = self._matching_windows_by_title(self.citrix_window_title, exact=True)
+        if not matches and self.citrix_desktop_name:
+            matches = self._matching_windows_by_title(self.citrix_desktop_name, exact=False)
+        if not matches:
+            message = (
+                f"Citrix focus guard could not find '{self.citrix_window_title}'. "
+                "Automation stopped to avoid running on the local system."
+            )
+            self.log_step(message, "ERROR")
+            raise RuntimeError(message)
+
+        window = self._best_window_match(matches, self.citrix_window_title)
+        self._activate_and_confirm_window(window, self.citrix_window_title, reason)
+
     def activate_window_by_title(
         self,
         title: str,
@@ -81,39 +240,16 @@ class AutomationContext:
 
         entered_title = title.strip()
         self.log_step(f"Find local window title: {entered_title}", "INFO")
-        windows = pygetwindow.getAllWindows()
-        if exact:
-            matches = [
-                window
-                for window in windows
-                if window.title.strip().casefold() == entered_title.casefold()
-            ]
-        else:
-            matches = [
-                window
-                for window in windows
-                if entered_title.casefold() in window.title.casefold()
-            ]
+        matches = self._matching_windows_by_title(entered_title, exact=exact)
 
         if not matches:
             message = f"Citrix desktop not found: {entered_title}"
             self.log_step(message, "ERROR")
             raise RuntimeError(message)
 
-        window = matches[0]
+        window = self._best_window_match(matches, entered_title)
         self.log_step(f"Matching Citrix window found: {window.title}", "INFO")
-        self.log_step(f"Activate local window: {window.title}", "INFO")
-        if window.isMinimized:
-            window.restore()
-        window.activate()
-        self._sleep_interruptibly(0.5)
-        self.citrix_window_rect = (
-            int(window.left),
-            int(window.top),
-            int(window.width),
-            int(window.height),
-        )
-        self.citrix_window_title = window.title
+        already_active = self._activate_and_confirm_window(window, entered_title, "Citrix activation")
         self.log_step(
             "Citrix window bounds: "
             f"left={self.citrix_window_rect[0]}, top={self.citrix_window_rect[1]}, "
@@ -121,12 +257,13 @@ class AutomationContext:
             "INFO",
         )
 
-        center_x = int(window.left) + max(int(window.width) // 2, 1)
-        center_y = int(window.top) + max(int(window.height) // 2, 1)
-        self.check_stop()
-        pyautogui.click(x=center_x, y=center_y, button="left")
-
-        delay = self.config.wait("citrix_activation_wait_sec", 4.0) if wait_after_sec is None else wait_after_sec
+        configured_activation_wait = self.config.wait("citrix_activation_wait_sec", 4.0)
+        if wait_after_sec is None:
+            delay = configured_activation_wait
+        else:
+            delay = wait_after_sec
+        if already_active and abs(delay - configured_activation_wait) < 0.001:
+            delay = self.config.wait("local_desktop_focus_wait_sec", 0.5)
         self.log_step(f"Wait after window activation: {delay} second(s)", "INFO")
         self._sleep_interruptibly(delay)
 
@@ -138,6 +275,7 @@ class AutomationContext:
         wait_after_sec: float | None = None,
     ) -> None:
         self.check_stop()
+        self.ensure_citrix_focus("click")
         target = "current mouse position" if x is None or y is None else f"({x}, {y})"
         self.log_step(f"Click {button} at {target}", "INFO")
         if x is None or y is None:
@@ -152,6 +290,7 @@ class AutomationContext:
 
     def click_screen_center(self, wait_after_sec: float | None = None) -> None:
         self.check_stop()
+        self.ensure_citrix_focus("screen-center click")
         left, top, width, height = self._target_rect()
         x = left + (width // 2)
         y = top + (height // 2)
@@ -162,6 +301,7 @@ class AutomationContext:
 
     def click_relative(self, x_ratio: float, y_ratio: float, wait_after_sec: float | None = None) -> None:
         self.check_stop()
+        self.ensure_citrix_focus("relative click")
         left, top, width, height = self._target_rect()
         x = left + int(width * x_ratio)
         y = top + int(height * y_ratio)
@@ -174,6 +314,7 @@ class AutomationContext:
 
     def double_click(self, x: int, y: int, wait_after_sec: float | None = None) -> None:
         self.check_stop()
+        self.ensure_citrix_focus("double-click")
         self.log_step(f"Double-click at ({x}, {y})", "INFO")
         x, y = self._to_virtual_point(x, y)
         pyautogui.moveTo(x=x, y=y, duration=0.25)
@@ -198,6 +339,7 @@ class AutomationContext:
 
     def move_to(self, x: int, y: int, duration: float = 0.0) -> None:
         self.check_stop()
+        self.ensure_citrix_focus("mouse move")
         self.log_step(f"Move mouse to ({x}, {y})", "INFO")
         x, y = self._to_virtual_point(x, y)
         pyautogui.moveTo(x=x, y=y, duration=duration)
@@ -273,12 +415,14 @@ class AutomationContext:
 
     def press(self, key: str, presses: int = 1) -> None:
         self.check_stop()
+        self.ensure_citrix_focus(f"press {key}")
         self.log_step(f"Press {key} x{presses}", "INFO")
         pyautogui.press(key, presses=presses)
         self.wait()
 
     def press_repeated(self, key: str, presses: int, interval_sec: float) -> None:
         self.check_stop()
+        self.ensure_citrix_focus(f"press {key}")
         self.log_step(f"Press {key} x{presses} with {interval_sec} second interval", "INFO")
         for _ in range(presses):
             self.check_stop()
@@ -288,12 +432,37 @@ class AutomationContext:
     def hotkey(self, *keys: str) -> None:
         self.check_stop()
         combo = " + ".join(keys)
+        self.ensure_citrix_focus(f"hotkey {combo}")
         self.log_step(f"Press hotkey {combo}", "INFO")
         pyautogui.hotkey(*keys)
         self._sleep_interruptibly(self.config.wait("after_hotkey_wait_sec", 1.0))
 
+    def hold_key_then_press(
+        self,
+        hold_key: str,
+        press_key: str,
+        hold_before_press_sec: float = 1.0,
+        wait_after_sec: float | None = None,
+    ) -> None:
+        self.check_stop()
+        self.ensure_citrix_focus(f"hold {hold_key} then press {press_key}")
+        self.log_step(
+            f"Hold {hold_key} for {hold_before_press_sec} second(s), press {press_key}, then release {hold_key}",
+            "INFO",
+        )
+        pyautogui.keyDown(hold_key)
+        try:
+            self._sleep_interruptibly(hold_before_press_sec)
+            self.check_stop()
+            pyautogui.press(press_key)
+        finally:
+            pyautogui.keyUp(hold_key)
+        delay = self.config.wait("after_hotkey_wait_sec", 1.0) if wait_after_sec is None else wait_after_sec
+        self._sleep_interruptibly(delay)
+
     def type_text(self, text: str, interval: float = 0.02, sensitive: bool = False) -> None:
         self.check_stop()
+        self.ensure_citrix_focus("typing")
         logged_text = mask_sensitive_text(text) if sensitive else text
         self.log_step(f"Type text: {logged_text}", "INFO")
         for char in text:
@@ -304,6 +473,7 @@ class AutomationContext:
 
     def copy_selected_text_from_active_window(self) -> str:
         self.check_stop()
+        self.ensure_citrix_focus("copy selected text")
         self.log_step("Select and copy text from active window for verification", "INFO")
         pyautogui.hotkey("ctrl", "a")
         self._sleep_interruptibly(self.config.wait("cmd_copy_wait_sec", 0.5))

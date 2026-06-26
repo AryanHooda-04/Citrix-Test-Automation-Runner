@@ -5,3 +5,10 @@ python-docx>=1.1.2
 pywin32>=306; platform_system == "Windows"
 customtkinter>=5.2.2
 matplotlib>=3.8.0
+winrt-Windows.Media.Ocr>=3.2.1
+winrt-Windows.Graphics.Imaging>=3.2.1
+winrt-Windows.Storage>=3.2.1
+winrt-Windows.Storage.Streams>=3.2.1
+winrt-Windows.Foundation>=3.2.1
+winrt-Windows.Globalization>=3.2.1
+winrt-Windows.Foundation.Collections>=3.2.1

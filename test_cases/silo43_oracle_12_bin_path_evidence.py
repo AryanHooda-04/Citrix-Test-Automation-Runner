@@ -1,15 +1,17 @@
 TEST_CASE = {
-    "id": "TC_002_HOSTNAME_IP",
-    "name": "Hostname_and_IP_Evidence",
-    "description": "Runs hostname and ipconfig in Citrix Command Prompt, then captures IP evidence.",
+    "id": "TC_017_SILO43_ORACLE_12_BIN_PATH",
+    "name": "Silo43_Oracle_12_Bin_Path_Evidence",
+    "description": "Validates the Silo 43 PATH starts with the Oracle 12 32-bit client bin path.",
+    "evidence_name": "silo43_oracle_12_bin_path_evidence",
 }
+
 
 def run(ctx):
     desktop_name = (ctx.citrix_desktop_name or "").strip()
     if not desktop_name:
-        raise RuntimeError("Please enter the Citrix Desktop Name before starting the test.")
+        raise RuntimeError("Please enter Citrix Desktop Name.")
 
-    ctx.step(f"Step 1: Activate Citrix desktop window: {desktop_name}")
+    ctx.step(f"Step 1: Activate Citrix desktop using user input: {desktop_name}")
     ctx.activate_window_by_title(
         desktop_name,
         exact=False,
@@ -24,7 +26,7 @@ def run(ctx):
     ctx.wait(ctx.config.wait("run_dialog_wait_sec", 1.5))
 
     ctx.step("Step 4: Launch Command Prompt")
-    ctx.type_text("cmd")
+    ctx.type_text("cmd", interval=0.15)
     ctx.press("enter")
     ctx.wait(ctx.config.wait("cmd_launch_wait_sec", 3.0))
 
@@ -34,14 +36,9 @@ def run(ctx):
     ctx.press("x")
     ctx.wait(1.0)
 
-    ctx.step("Step 6: Execute hostname command")
-    ctx.type_text("hostname")
+    ctx.step("Step 6: Execute PATH echo command")
+    ctx.type_text("echo %path%", interval=0.05)
     ctx.press("enter")
-    ctx.wait(ctx.config.wait("after_hostname_command_wait_sec", 2.0))
+    ctx.wait(ctx.config.wait("silo43_oracle_path_output_wait_sec", 3.0))
 
-    ctx.step("Step 7: Execute ipconfig command")
-    ctx.type_text("ipconfig")
-    ctx.press("enter")
-    ctx.wait(ctx.config.wait("after_ipconfig_enter_wait_sec", 3.0))
-
-    ctx.step("Step 8: ipconfig wait completed. Runner will now capture and copy the final pass screenshot.")
+    ctx.step("Step 7: PATH output wait completed. Runner will capture and validate the final screenshot.")

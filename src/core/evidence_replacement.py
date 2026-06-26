@@ -12,6 +12,7 @@ CAPTURE_EVIDENCE_PATTERN = re.compile(r"capture_evidence\(\s*[\"']([^\"']+)[\"']
 EVIDENCE_STATUS_PATTERN = re.compile(r"^(?P<prefix>.+)_(Pass|Fail)_[0-9]{8}_[0-9]{6}\.png$", re.IGNORECASE)
 EXPLICIT_PREFIXES_BY_TEST_NAME = {
     "Office_Applications_Launch": (
+        # Legacy prefixes are kept only so old Office evidence is cleaned up when the PowerPoint-only flow runs.
         "word_evidence",
         "powerpnt_evidence",
         "excel_evidence",

@@ -17,6 +17,10 @@ class AppConfig:
         return self.raw.get("waits", {})
 
     @property
+    def runtime_profile(self) -> dict[str, Any]:
+        return self.raw.get("runtime_profile", {})
+
+    @property
     def screenshot_settings(self) -> dict[str, bool]:
         return self.raw.get("screenshots", {})
 
@@ -37,8 +41,37 @@ class AppConfig:
             path = self.root_dir / path
         return path
 
+    def runtime_mode(self) -> str:
+        profiles = self.runtime_profile.get("profiles", {})
+        configured = str(self.runtime_profile.get("mode", "normal")).strip().lower()
+        return configured if configured in profiles else "normal"
+
+    def runtime_mode_label(self) -> str:
+        mode = self.runtime_mode()
+        profile = self.runtime_profile.get("profiles", {}).get(mode, {})
+        return str(profile.get("label", mode.title()))
+
+    def runtime_wait_multiplier(self) -> float:
+        mode = self.runtime_mode()
+        profile = self.runtime_profile.get("profiles", {}).get(mode, {})
+        try:
+            return float(profile.get("multiplier", 1.0))
+        except (TypeError, ValueError):
+            return 1.0
+
     def wait(self, key: str, default: float = 0.5) -> float:
-        return float(self.waits.get(key, default))
+        base_wait = float(self.waits.get(key, default))
+        mode = self.runtime_mode()
+        profile = self.runtime_profile.get("profiles", {}).get(mode, {})
+        excluded_keys = set(profile.get("excluded_wait_keys", []))
+        minimum_unscaled = float(profile.get("minimum_unscaled_wait_sec", 0.0))
+
+        if key in excluded_keys or base_wait <= minimum_unscaled:
+            return base_wait
+
+        multiplier = self.runtime_wait_multiplier()
+        minimum_wait = float(profile.get("minimum_wait_sec", 0.0))
+        return max(minimum_wait, base_wait * multiplier)
 
 
 def load_config(root_dir: Path) -> AppConfig:

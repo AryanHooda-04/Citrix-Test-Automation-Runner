@@ -9,7 +9,7 @@ TEST_CASE = {
 TEMP_FOLDER = r"C:\Temp"
 FILE_SEARCH_TEXT = "Applist"
 IN_FILE_SEARCH_TEXT = "NOT OK"
-DEFAULT_SEARCH_RESULT_CLICK = {
+DEFAULT_SEARCH_RESULT_DOUBLE_CLICK = {
     "x": 535,
     "y": 232,
 }
@@ -33,38 +33,15 @@ def run(ctx):
     ctx.step("Step 2: Ensure Citrix input focus with a center-screen click")
     ctx.click_screen_center(wait_after_sec=ctx.config.wait("citrix_focus_click_wait_sec", 1.0))
 
-    ctx.step(f"Step 3: Open File Explorer via Run at {TEMP_FOLDER}")
+    ctx.step("Step 3: Open newest Applist file directly from C:\\Temp")
     ctx.hotkey("winleft", "r")
     ctx.wait(ctx.config.wait("run_dialog_wait_sec", 1.5))
-    ctx.type_text(TEMP_FOLDER, interval=0.15)
-    ctx.press("enter")
-    ctx.wait(ctx.config.wait("explorer_open_wait_sec", 3.0))
-
-    ctx.step("Maximize File Explorer")
-    ctx.maximize_active_window()
-    ctx.wait(ctx.config.wait("explorer_after_maximize_wait_sec", 2.0))
-
-    ctx.step(f"Step 4: Search for Applist file using Explorer search: {FILE_SEARCH_TEXT}")
-    ctx.hotkey("ctrl", "f")
-    ctx.wait(0.5)
-    ctx.type_text(FILE_SEARCH_TEXT, interval=0.15)
-    ctx.wait(ctx.config.wait("applist_search_results_wait_sec", 3.0))
-
-    click_config = ctx.config.raw.get("applist_evidence", {}).get(
-        "search_result_click",
-        DEFAULT_SEARCH_RESULT_CLICK,
+    ctx.type_text(
+        'powershell -NoProfile -Command "notepad ((Get-ChildItem '
+        f"'{TEMP_FOLDER}\\Applist*' -File | Sort-Object LastWriteTime -Descending | "
+        'Select-Object -First 1).FullName)"',
+        interval=0.15,
     )
-    result_x = int(click_config.get("x", DEFAULT_SEARCH_RESULT_CLICK["x"]))
-    result_y = int(click_config.get("y", DEFAULT_SEARCH_RESULT_CLICK["y"]))
-
-    ctx.step(f"Step 5: Click first Applist search result at ({result_x}, {result_y}), then press Enter")
-    click_wait_sec = ctx.config.wait("applist_search_result_click_wait_sec", 0.5)
-    ctx.click(
-        result_x,
-        result_y,
-        wait_after_sec=click_wait_sec,
-    )
-    ctx.wait(click_wait_sec)
     ctx.press("enter")
     ctx.wait(ctx.config.wait("applist_open_wait_sec", 5.0))
 

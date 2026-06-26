@@ -12,7 +12,7 @@ TEST_CASE = {
 }
 
 
-WEBSITES = ["Web: google.com", "Web: yahoo.com"]
+WEBSITES = ["https://www.google.com", "yahoo.com"]
 
 GOOGLE_CONSENT_PANEL_REGION = (360, 220, 1080, 520)
 GOOGLE_CONSENT_OVERLAY_REGION = (40, 360, 180, 300)
@@ -21,6 +21,39 @@ YAHOO_CONSENT_OVERLAY_REGION = (60, 360, 190, 300)
 GOOGLE_CHROME_PROMPT_BLUE_REGION = (1580, 805, 240, 90)
 GOOGLE_DONT_USE_CHROME_X = 1435
 GOOGLE_DONT_USE_CHROME_Y = 845
+SILO52_TIMING_KEYWORD = "SILO52"
+SILO52_TIMING_PROFILE = "safe"
+
+
+def _use_silo52_web_timings(ctx):
+    desktop_name = (ctx.citrix_desktop_name or "").upper()
+    return SILO52_TIMING_KEYWORD in desktop_name
+
+
+def _web_wait(ctx, key, default=0.5):
+    if not _use_silo52_web_timings(ctx):
+        return ctx.config.wait(key, default)
+
+    current_wait = ctx.config.wait(key, default)
+    safe_wait = _profile_wait(ctx, key, default, SILO52_TIMING_PROFILE)
+    return max(current_wait, safe_wait)
+
+
+def _profile_wait(ctx, key, default, profile_name):
+    base_wait = float(ctx.config.waits.get(key, default))
+    profile = ctx.config.runtime_profile.get("profiles", {}).get(profile_name, {})
+    excluded_keys = set(profile.get("excluded_wait_keys", []))
+    minimum_unscaled = float(profile.get("minimum_unscaled_wait_sec", 0.0))
+
+    if key in excluded_keys or base_wait <= minimum_unscaled:
+        return base_wait
+
+    try:
+        multiplier = float(profile.get("multiplier", 1.0))
+    except (TypeError, ValueError):
+        multiplier = 1.0
+    minimum_wait = float(profile.get("minimum_wait_sec", 0.0))
+    return max(minimum_wait, base_wait * multiplier)
 
 
 def run(ctx):
@@ -29,19 +62,21 @@ def run(ctx):
         raise RuntimeError("Please enter Citrix Desktop Name.")
 
     ctx.step(f"Websites opened: {', '.join(WEBSITES)}")
+    if _use_silo52_web_timings(ctx):
+        ctx.step("SILO52 detected. Using Safe-mode timings for Google/Yahoo web access.")
 
     ctx.step(f"Step 1: Activate Citrix desktop using user input: {desktop_name}")
     ctx.activate_window_by_title(
         desktop_name,
         exact=False,
-        wait_after_sec=ctx.config.wait("citrix_activation_wait_sec", 4.0),
+        wait_after_sec=_web_wait(ctx, "citrix_activation_wait_sec", 4.0),
     )
 
     ctx.step("Step 2: Ensure Citrix input focus with a center-screen click")
-    ctx.click_screen_center(wait_after_sec=ctx.config.wait("citrix_focus_click_wait_sec", 1.0))
+    ctx.click_screen_center(wait_after_sec=_web_wait(ctx, "citrix_focus_click_wait_sec", 1.0))
 
     ctx.step("Google Website Steps")
-    _open_website_from_windows_search(ctx, "Step 3: Open Windows Search", "Step 4: Launch Google Website", "Web: google.com")
+    _open_google_directly(ctx)
 
     ctx.step("Step 5: Dismiss possible Google restore previous pages prompt")
     _dismiss_possible_restore_prompt(ctx)
@@ -51,7 +86,7 @@ def run(ctx):
         ctx.step("Google consent popup detected. Running Tab x4 + Enter.")
         _accept_using_tabs(ctx, presses=4)
         ctx.step("Wait after Google permission handling so the page can finish loading")
-        ctx.wait(ctx.config.wait("google_after_permission_wait_sec", 5.0))
+        ctx.wait(_web_wait(ctx, "google_after_permission_wait_sec", 5.0))
     else:
         ctx.step("Google consent popup not detected. Skipping Tab/Enter consent handling.")
 
@@ -59,26 +94,26 @@ def run(ctx):
     _dismiss_google_chrome_prompt_if_visible(ctx)
 
     ctx.step("Final Google page settle wait before evidence capture")
-    ctx.wait(ctx.config.wait("google_before_capture_wait_sec", 10.0))
+    ctx.wait(_web_wait(ctx, "google_before_capture_wait_sec", 10.0))
 
     ctx.step("Step 7: Capture Google evidence")
     google_path = ctx.capture_evidence("google_evidence")
     ctx.step(f"Google evidence file generated: {google_path}")
 
     ctx.step("Yahoo Website Steps")
-    _open_website_from_windows_search(ctx, "Step 8: Open Windows Search Again", "Step 9: Launch Yahoo Website", "Web: yahoo.com")
+    _open_yahoo_in_new_edge_tab(ctx)
 
     ctx.step("Step 10: Conditionally accept Yahoo terms using keyboard navigation")
     if _is_consent_modal_visible(ctx, "yahoo"):
         ctx.step("Yahoo consent popup detected. Running Tab x10 + Enter.")
         _accept_using_tabs(ctx, presses=10)
         ctx.step("Wait after Yahoo permission handling so the page can finish loading")
-        ctx.wait(ctx.config.wait("yahoo_after_permission_wait_sec", 5.0))
+        ctx.wait(_web_wait(ctx, "yahoo_after_permission_wait_sec", 5.0))
     else:
         ctx.step("Yahoo consent popup not detected. Skipping Tab/Enter consent handling.")
 
     ctx.step("Final Yahoo page settle wait before evidence capture")
-    ctx.wait(ctx.config.wait("yahoo_before_capture_wait_sec", 10.0))
+    ctx.wait(_web_wait(ctx, "yahoo_before_capture_wait_sec", 10.0))
 
     ctx.step("Step 11: Capture Yahoo evidence")
     yahoo_path = ctx.capture_evidence("yahoo_evidence")
@@ -88,32 +123,63 @@ def run(ctx):
 def _open_website_from_windows_search(ctx, search_step, launch_step, website):
     ctx.step(search_step)
     ctx.hotkey("winleft", "s")
-    ctx.wait(ctx.config.wait("windows_search_wait_sec", 2.0))
+    ctx.wait(_web_wait(ctx, "windows_search_wait_sec", 2.0))
 
     ctx.step(launch_step)
     ctx.type_text(website, interval=0.15)
-    ctx.wait(ctx.config.wait("windows_search_results_wait_sec", 5.0))
+    ctx.wait(_web_wait(ctx, "windows_search_results_wait_sec", 5.0))
     ctx.press("enter")
-    ctx.wait(ctx.config.wait("web_page_load_wait_sec", 5.0))
+    ctx.wait(_web_wait(ctx, "web_page_load_wait_sec", 5.0))
+
+
+def _open_google_directly(ctx):
+    ctx.step("Step 3: Open Run dialog for direct Edge launch")
+    ctx.hotkey("winleft", "r")
+    ctx.wait(_web_wait(ctx, "run_dialog_wait_sec", 1.5))
+
+    try:
+        ctx.step("Step 4: Launch Google directly in Microsoft Edge")
+        ctx.type_text("msedge https://www.google.com", interval=0.15)
+        ctx.press("enter")
+        ctx.wait(_web_wait(ctx, "web_direct_launch_wait_sec", 4.0))
+    except Exception as exc:
+        ctx.step(f"Direct Edge launch failed, falling back to Windows Search: {exc}")
+        _open_website_from_windows_search(
+            ctx,
+            "Step 3: Open Windows Search",
+            "Step 4: Launch Google Website",
+            "Web: google.com",
+        )
+
+
+def _open_yahoo_in_new_edge_tab(ctx):
+    ctx.step("Step 8: Open a new Edge tab for Yahoo")
+    ctx.hotkey("ctrl", "t")
+    ctx.wait(_web_wait(ctx, "edge_new_tab_wait_sec", 1.0))
+
+    ctx.step("Step 9: Navigate to yahoo.com in the existing Edge window")
+    ctx.type_text("yahoo.com", interval=0.15)
+    ctx.press("enter")
+    ctx.wait(_web_wait(ctx, "web_page_load_wait_sec", 5.0))
 
 
 def _dismiss_possible_restore_prompt(ctx):
     ctx.press_repeated(
         "esc",
         presses=2,
-        interval_sec=ctx.config.wait("web_restore_prompt_dismiss_wait_sec", 1.0),
+        interval_sec=_web_wait(ctx, "web_restore_prompt_dismiss_wait_sec", 1.0),
     )
-    ctx.wait(ctx.config.wait("web_restore_prompt_dismiss_wait_sec", 1.0))
+    ctx.wait(_web_wait(ctx, "web_restore_prompt_dismiss_wait_sec", 1.0))
 
 
 def _accept_using_tabs(ctx, presses):
     ctx.press_repeated(
         "tab",
         presses=presses,
-        interval_sec=ctx.config.wait("web_consent_tab_interval_sec", 0.3),
+        interval_sec=_web_wait(ctx, "web_consent_tab_interval_sec", 0.3),
     )
     ctx.press("enter")
-    ctx.wait(ctx.config.wait("web_consent_after_enter_wait_sec", 2.0))
+    ctx.wait(_web_wait(ctx, "web_consent_after_enter_wait_sec", 2.0))
 
 
 def _is_consent_modal_visible(ctx, site):
@@ -167,9 +233,9 @@ def _dismiss_google_chrome_prompt_if_visible(ctx):
         ctx.click(
             click_x,
             click_y,
-            wait_after_sec=ctx.config.wait("web_optional_popup_dismiss_wait_sec", 1.0),
+            wait_after_sec=_web_wait(ctx, "web_optional_popup_dismiss_wait_sec", 1.0),
         )
-        ctx.wait(ctx.config.wait("google_after_popup_handling_wait_sec", 3.0))
+        ctx.wait(_web_wait(ctx, "google_after_popup_handling_wait_sec", 3.0))
     else:
         ctx.step("Google Chrome promotion not detected. Skipping dismissal click.")
 
