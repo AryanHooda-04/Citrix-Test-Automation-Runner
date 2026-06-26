@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,12 @@ class OpenAIKeyStatus:
     source: str
     detail: str
     path: Path | None = None
+
+
+@dataclass(frozen=True)
+class OpenAIKeyTestResult:
+    ok: bool
+    message: str
 
 
 def openai_secret_path() -> Path:
@@ -97,6 +104,62 @@ def clear_saved_openai_api_key() -> Path:
     else:
         secret_path.unlink(missing_ok=True)
     return secret_path
+
+
+def test_openai_api_key(settings: dict[str, Any] | None = None, api_key: str | None = None) -> OpenAIKeyTestResult:
+    settings = settings or {}
+    cleaned = (api_key or "").strip() or load_openai_api_key(settings)
+    if not cleaned:
+        env_name = str(settings.get("api_key_env_var") or DEFAULT_ENV_VAR)
+        return OpenAIKeyTestResult(False, f"{env_name} is not set and no saved local key is configured.")
+
+    endpoint = str(settings.get("test_endpoint") or "https://api.openai.com/v1/models")
+    command = [
+        "curl.exe",
+        "--silent",
+        "--show-error",
+    ]
+    if bool(settings.get("curl_ssl_no_revoke", True)):
+        command.append("--ssl-no-revoke")
+    command.extend(["--config", "-"])
+    curl_config = "\n".join(
+        [
+            f'url = "{endpoint}"',
+            'request = "GET"',
+            f'header = "Authorization: Bearer {cleaned}"',
+        ]
+    )
+
+    try:
+        completed = subprocess.run(
+            command,
+            input=curl_config,
+            capture_output=True,
+            text=True,
+            timeout=float(settings.get("test_timeout_sec", 20)),
+            check=False,
+        )
+    except Exception as exc:
+        return OpenAIKeyTestResult(False, f"Could not test key: {exc}")
+
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or f"curl exited with code {completed.returncode}").strip()
+        return OpenAIKeyTestResult(False, detail[:300])
+
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return OpenAIKeyTestResult(False, "OpenAI returned an unreadable response.")
+
+    if isinstance(payload, dict) and payload.get("error"):
+        error = payload["error"]
+        message = error.get("message") if isinstance(error, dict) else str(error)
+        return OpenAIKeyTestResult(False, str(message)[:300])
+
+    if isinstance(payload, dict) and isinstance(payload.get("data"), list):
+        return OpenAIKeyTestResult(True, "Key test passed. OpenAI API responded successfully.")
+
+    return OpenAIKeyTestResult(False, "OpenAI response did not include the expected models list.")
 
 
 def _read_saved_key() -> str:

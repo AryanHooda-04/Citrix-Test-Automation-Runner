@@ -28,7 +28,12 @@ from core.master_runner import (
     MasterRunner,
     ShakedownRunner,
 )
-from core.openai_settings import clear_saved_openai_api_key, get_openai_key_status, save_openai_api_key
+from core.openai_settings import (
+    clear_saved_openai_api_key,
+    get_openai_key_status,
+    save_openai_api_key,
+    test_openai_api_key,
+)
 from core.preflight import PreflightResult, run_preflight_checks
 from core.skip_control import CombinedStopSkipEvent, consume_skip_request
 from core.stop_control import StopRequested, interruptible_sleep, wait_if_paused
@@ -4165,8 +4170,8 @@ class AutomationApp(ctk.CTk):
         settings = self.config.raw.get("ai_validation", {})
         modal = ctk.CTkToplevel(self)
         modal.title("OpenAI API Key")
-        modal.geometry("520x300")
-        modal.minsize(480, 280)
+        modal.geometry("570x390")
+        modal.minsize(540, 360)
         self._configure_schedule_popup(modal)
 
         card = ctk.CTkFrame(
@@ -4178,6 +4183,7 @@ class AutomationApp(ctk.CTk):
         )
         card.pack(fill=tk.BOTH, expand=True, padx=18, pady=18)
         card.grid_columnconfigure(0, weight=1)
+        card.grid_columnconfigure(1, weight=0)
 
         ctk.CTkLabel(
             card,
@@ -4189,28 +4195,53 @@ class AutomationApp(ctk.CTk):
         ctk.CTkLabel(
             card,
             text=(
-                "Used only for AI fallback validation. The key is saved locally under your Windows "
-                "profile, not inside the release package."
+                "Used only for AI fallback validation. The saved value is masked, stored under your "
+                "Windows profile, and never displayed back in this app."
             ),
             text_color=THEME["muted"],
             font=("Segoe UI", 10),
             anchor=tk.W,
-            wraplength=450,
+            wraplength=500,
             justify=tk.LEFT,
-        ).grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 14))
+        ).grid(row=1, column=0, columnspan=2, sticky="ew", padx=18, pady=(0, 12))
+
+        status_row = ctk.CTkFrame(card, fg_color="transparent")
+        status_row.grid(row=2, column=0, columnspan=2, sticky="ew", padx=18, pady=(0, 12))
+        status_row.grid_columnconfigure(1, weight=1)
+
+        status_pill = ctk.CTkLabel(
+            status_row,
+            text="Missing",
+            fg_color=STATUS_BADGES["Skipped"][0],
+            text_color=STATUS_BADGES["Skipped"][1],
+            corner_radius=12,
+            width=104,
+            height=26,
+            font=("Segoe UI", 10, "bold"),
+        )
+        status_pill.grid(row=0, column=0, sticky="w", padx=(0, 10))
+
+        source_label = ctk.CTkLabel(
+            status_row,
+            text="No key configured",
+            text_color=THEME["muted"],
+            font=("Segoe UI", 10),
+            anchor=tk.W,
+        )
+        source_label.grid(row=0, column=1, sticky="ew")
 
         key_entry = ctk.CTkEntry(
             card,
-            placeholder_text="Paste new OpenAI API key",
+            placeholder_text="Paste new OpenAI API key to save or test",
             show="*",
-            height=38,
+            height=40,
             fg_color=THEME["input"],
             border_color=THEME["border"],
             text_color=THEME["text"],
             placeholder_text_color=THEME["muted"],
             font=("Segoe UI", 11),
         )
-        key_entry.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 10))
+        key_entry.grid(row=3, column=0, columnspan=2, sticky="ew", padx=18, pady=(0, 8))
 
         status_label = ctk.CTkLabel(
             card,
@@ -4219,17 +4250,34 @@ class AutomationApp(ctk.CTk):
             font=("Segoe UI", 10),
             anchor=tk.W,
             justify=tk.LEFT,
-            wraplength=450,
+            wraplength=500,
         )
-        status_label.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 16))
+        status_label.grid(row=4, column=0, columnspan=2, sticky="ew", padx=18, pady=(0, 14))
 
         def refresh_status(message: str = "") -> None:
             status = get_openai_key_status(settings)
-            text = message or status.detail
-            if status.source == "environment":
-                text = f"{text} Environment value takes priority over saved local keys."
-            elif status.path is not None and not message:
-                text = f"{text}\nLocal settings path: {status.path}"
+            if status.configured:
+                source_text = {
+                    "environment": "Configured from environment variable. It takes priority over saved local keys.",
+                    "local": "Configured from saved local settings.",
+                    "config": "Configured from app config.",
+                }.get(status.source, "Configured.")
+                status_pill.configure(
+                    text="Configured",
+                    fg_color=STATUS_BADGES["Pass"][0],
+                    text_color=STATUS_BADGES["Pass"][1],
+                )
+                source_label.configure(text=source_text, text_color=STATUS_BADGES["Pass"][1])
+                default_text = "The API key is available. The value is not shown."
+            else:
+                status_pill.configure(
+                    text="Missing",
+                    fg_color=STATUS_BADGES["Skipped"][0],
+                    text_color=STATUS_BADGES["Skipped"][1],
+                )
+                source_label.configure(text="No key configured", text_color=STATUS_BADGES["Skipped"][1])
+                default_text = "Paste a key, then click Save Key. You can also test before saving."
+            text = message or default_text
             status_label.configure(
                 text=text,
                 text_color=STATUS_BADGES["Pass"][1] if status.configured else STATUS_BADGES["Skipped"][1],
@@ -4242,7 +4290,7 @@ class AutomationApp(ctk.CTk):
                 status_label.configure(text=f"Could not save key: {exc}", text_color=THEME["danger"])
                 return
             key_entry.delete(0, tk.END)
-            refresh_status(f"AI key saved successfully.\nLocal settings path: {path}")
+            refresh_status(f"AI key saved successfully. Local file: {path}")
 
         def clear_key() -> None:
             try:
@@ -4250,19 +4298,62 @@ class AutomationApp(ctk.CTk):
             except Exception as exc:
                 status_label.configure(text=f"Could not clear saved key: {exc}", text_color=THEME["danger"])
                 return
-            refresh_status(f"Saved local key cleared.\nLocal settings path: {path}")
+            key_entry.delete(0, tk.END)
+            refresh_status(f"Saved local key cleared. Local file: {path}")
+
+        def set_testing_state(is_testing: bool) -> None:
+            state = tk.DISABLED if is_testing else tk.NORMAL
+            save_button.configure(state=state)
+            test_button.configure(state=state)
+            clear_button.configure(state=state)
+
+        def test_key() -> None:
+            candidate = key_entry.get().strip()
+            status_label.configure(
+                text="Testing key with OpenAI...",
+                text_color=THEME["muted"],
+            )
+            set_testing_state(True)
+
+            def worker() -> None:
+                result = test_openai_api_key(settings, candidate or None)
+
+                def apply_result() -> None:
+                    try:
+                        if not modal.winfo_exists():
+                            return
+                    except tk.TclError:
+                        return
+                    set_testing_state(False)
+                    color = STATUS_BADGES["Pass"][1] if result.ok else THEME["danger"]
+                    status_label.configure(text=result.message, text_color=color)
+
+                try:
+                    modal.after(0, apply_result)
+                except tk.TclError:
+                    pass
+
+            threading.Thread(target=worker, daemon=True).start()
 
         actions = ctk.CTkFrame(card, fg_color="transparent")
-        actions.grid(row=4, column=0, sticky="e", padx=18, pady=(0, 18))
-        ModernButton(actions, text="Save Key", variant="primary", command=save_key, height=34, min_width=110).pack(
+        actions.grid(row=5, column=0, columnspan=2, sticky="e", padx=18, pady=(0, 18))
+        save_button = ModernButton(actions, text="Save Key", variant="primary", command=save_key, height=34, min_width=104)
+        save_button.pack(
             side=tk.LEFT,
             padx=(0, 8),
         )
-        ModernButton(actions, text="Clear Saved", variant="secondary", command=clear_key, height=34, min_width=110).pack(
+        test_button = ModernButton(actions, text="Test Key", variant="secondary", command=test_key, height=34, min_width=104)
+        test_button.pack(
             side=tk.LEFT,
             padx=(0, 8),
         )
-        ModernButton(actions, text="Close", variant="ghost", command=modal.destroy, height=34, min_width=90).pack(
+        clear_button = ModernButton(actions, text="Clear Saved", variant="secondary", command=clear_key, height=34, min_width=108)
+        clear_button.pack(
+            side=tk.LEFT,
+            padx=(0, 8),
+        )
+        close_button = ModernButton(actions, text="Close", variant="ghost", command=modal.destroy, height=34, min_width=84)
+        close_button.pack(
             side=tk.LEFT
         )
 
