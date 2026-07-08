@@ -66,8 +66,9 @@ def health(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     }
 
 
+@app.get("/probe")
 @app.get("/test-openai")
-def test_openai(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+def probe_openai(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     settings = _settings()
     _require_token(settings, authorization)
     if not settings.openai_api_key:

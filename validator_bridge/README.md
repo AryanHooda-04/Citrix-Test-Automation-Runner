@@ -35,7 +35,7 @@ curl.exe http://localhost:8080/health
 Full OpenAI backend test:
 
 ```powershell
-curl.exe -H "Authorization: Bearer long-random-token" http://localhost:8080/test-openai
+curl.exe -H "Authorization: Bearer long-random-token" http://localhost:8080/probe
 ```
 
 Expected result:
@@ -59,7 +59,7 @@ Update `config/config.json`:
   "bridge_url": "https://your-validator-host.example.com",
   "bridge_token": "",
   "bridge_token_env_var": "CITRIX_VALIDATOR_TOKEN",
-  "bridge_test_path": "/test-openai"
+  "bridge_test_path": "/probe"
 }
 ```
 

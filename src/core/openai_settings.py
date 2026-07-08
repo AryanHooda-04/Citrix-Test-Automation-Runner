@@ -194,7 +194,7 @@ def _test_validator_bridge(settings: dict[str, Any]) -> OpenAIKeyTestResult:
     if not base_url:
         return OpenAIKeyTestResult(False, "Validator bridge URL is not configured.")
 
-    test_path = str(settings.get("bridge_test_path") or "/test-openai").strip() or "/test-openai"
+    test_path = str(settings.get("bridge_test_path") or "/probe").strip() or "/probe"
     if not test_path.startswith("/"):
         test_path = f"/{test_path}"
     endpoint = f"{base_url}{test_path}"
@@ -212,7 +212,7 @@ def _test_validator_bridge(settings: dict[str, Any]) -> OpenAIKeyTestResult:
         if exc.code == 404:
             return OpenAIKeyTestResult(
                 False,
-                "Validator bridge does not have /test-openai yet. Restart or redeploy the updated bridge.",
+                "Validator bridge does not have /probe yet. Restart or redeploy the updated bridge.",
             )
         return OpenAIKeyTestResult(False, (_bridge_error_message(detail) or f"Validator bridge returned HTTP {exc.code}")[:300])
     except urllib.error.URLError as exc:

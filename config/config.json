@@ -184,7 +184,7 @@
     "bridge_token": "",
     "bridge_token_env_var": "CITRIX_VALIDATOR_TOKEN",
     "bridge_health_path": "/health",
-    "bridge_test_path": "/test-openai",
+    "bridge_test_path": "/probe",
     "bridge_timeout_sec": 90,
     "hostname_ip_enabled": true,
     "fallback_enabled": true,
