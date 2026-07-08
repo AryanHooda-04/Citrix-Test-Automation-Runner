@@ -124,6 +124,30 @@ Local key path:
 %APPDATA%\CitrixTestAutomationRunner\openai_settings.json
 ```
 
+### Optional AI Validator Bridge
+
+If tester laptops cannot reach `api.openai.com` directly, keep the v2.0.0 app flow and route AI fallback through the hosted bridge in `validator_bridge\`.
+
+Recommended setup:
+
+1. Host the bridge on an approved internal or controlled endpoint.
+2. Store `OPENAI_API_KEY` only on that hosted backend.
+3. Protect `/validate` with `VALIDATOR_TOKEN`.
+4. Configure `config\config.json`:
+
+   ```json
+   "ai_validation": {
+     "enabled": true,
+     "mode": "bridge",
+     "bridge_url": "https://your-validator-host.example.com",
+     "bridge_token_env_var": "CITRIX_VALIDATOR_TOKEN"
+   }
+   ```
+
+5. Set `CITRIX_VALIDATOR_TOKEN` on tester machines instead of sharing the OpenAI API key.
+
+This keeps the AI Key UI and v2.0.0 validation behavior, but removes the need for every colleague laptop to call OpenAI directly.
+
 ## Scheduled Desktop Testing Note
 
 The app supports scheduled Complete Testing for multiple desktops, but Citrix sessions can log out while waiting. Use scheduled testing only when all target desktops remain authenticated and active for the full batch duration.

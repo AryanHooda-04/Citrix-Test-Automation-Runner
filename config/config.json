@@ -179,6 +179,13 @@
   },
   "ai_validation": {
     "enabled": true,
+    "mode": "bridge",
+    "bridge_url": "http://127.0.0.1:8090",
+    "bridge_token": "",
+    "bridge_token_env_var": "CITRIX_VALIDATOR_TOKEN",
+    "bridge_health_path": "/health",
+    "bridge_test_path": "/test-openai",
+    "bridge_timeout_sec": 90,
     "hostname_ip_enabled": true,
     "fallback_enabled": true,
     "fallback_testcases": {
@@ -200,11 +207,14 @@
     },
     "model": "gpt-4.1-mini",
     "endpoint": "https://api.openai.com/v1/responses",
+    "test_endpoint": "https://api.openai.com/v1/models",
     "curl_ssl_no_revoke": true,
     "timeout_sec": 90,
+    "test_timeout_sec": 20,
     "hostname_ip_max_attempts": 1,
     "max_output_tokens": 320,
-    "image_detail": "low"
+    "image_detail": "low",
+    "api_key_env_var": "OPENAI_API_KEY"
   },
   "pyautogui": {
     "pause_sec": 0.1,

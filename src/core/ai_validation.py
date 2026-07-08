@@ -3,8 +3,11 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
+import os
 import subprocess
 import tempfile
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -29,6 +32,15 @@ def validate_hostname_ip_evidence(
     image_path: Path,
     settings: dict[str, Any],
 ) -> AIValidationResult:
+    if _uses_bridge(settings):
+        return _validate_with_bridge(
+            image_path,
+            settings,
+            validation_type="hostname_ip",
+            evidence_label="Hostname/IP evidence screenshot",
+            prompt=_hostname_ip_validation_prompt(),
+        )
+
     api_key = load_openai_api_key(settings)
     if not api_key:
         env_name = str(settings.get("api_key_env_var") or "OPENAI_API_KEY")
@@ -66,17 +78,7 @@ def validate_hostname_ip_evidence(
             raw_text=raw_text,
         )
 
-    return AIValidationResult(
-        valid=bool(payload.get("valid")),
-        reason=str(payload.get("reason") or "").strip() or "No reason provided.",
-        cmd_hostname=str(payload.get("cmd_hostname") or "").strip(),
-        overlay_hostname=str(payload.get("overlay_hostname") or "").strip(),
-        ipv4_addresses=tuple(str(value).strip() for value in payload.get("ipv4_addresses", []) if str(value).strip()),
-        version=str(payload.get("version") or "").strip(),
-        available=_coerce_optional_bool(payload.get("available")),
-        fields=_coerce_string_dict(payload.get("fields")),
-        raw_text=raw_text,
-    )
+    return _result_from_payload(payload, raw_text=raw_text)
 
 
 def validate_screenshot_evidence(
@@ -86,6 +88,17 @@ def validate_screenshot_evidence(
     description: str,
     evidence_label: str = "screenshot evidence",
 ) -> AIValidationResult:
+    prompt = _generic_validation_prompt(description=description, evidence_label=evidence_label)
+    if _uses_bridge(settings):
+        return _validate_with_bridge(
+            image_path,
+            settings,
+            validation_type="generic",
+            evidence_label=evidence_label,
+            description=description,
+            prompt=prompt,
+        )
+
     api_key = load_openai_api_key(settings)
     if not api_key:
         env_name = str(settings.get("api_key_env_var") or "OPENAI_API_KEY")
@@ -100,7 +113,6 @@ def validate_screenshot_evidence(
             reason=f"Screenshot does not exist: {image_path}",
         )
 
-    prompt = _generic_validation_prompt(description=description, evidence_label=evidence_label)
     try:
         response = _send_validation_request(image_path, api_key, settings, prompt=prompt)
     except Exception as exc:
@@ -124,14 +136,148 @@ def validate_screenshot_evidence(
             raw_text=raw_text,
         )
 
-    return AIValidationResult(
-        valid=bool(payload.get("valid")),
-        reason=str(payload.get("reason") or "").strip() or "No reason provided.",
-        version=str(payload.get("version") or "").strip(),
-        available=_coerce_optional_bool(payload.get("available")),
-        fields=_coerce_string_dict(payload.get("fields")),
-        raw_text=raw_text,
+    return _result_from_payload(payload, raw_text=raw_text)
+
+
+def _uses_bridge(settings: dict[str, Any]) -> bool:
+    return str(settings.get("mode") or "direct").strip().casefold() == "bridge"
+
+
+def _validate_with_bridge(
+    image_path: Path,
+    settings: dict[str, Any],
+    *,
+    validation_type: str,
+    evidence_label: str,
+    prompt: str,
+    description: str = "",
+) -> AIValidationResult:
+    if not image_path.exists():
+        return AIValidationResult(
+            valid=False,
+            reason=f"Screenshot does not exist: {image_path}",
+        )
+
+    bridge_url = _bridge_validate_url(settings)
+    if not bridge_url:
+        return AIValidationResult(
+            valid=False,
+            reason="Validator bridge URL is not configured.",
+        )
+
+    try:
+        response = _send_bridge_validation_request(
+            image_path,
+            settings,
+            bridge_url=bridge_url,
+            validation_type=validation_type,
+            evidence_label=evidence_label,
+            description=description,
+            prompt=prompt,
+        )
+    except Exception as exc:
+        return AIValidationResult(valid=False, reason=f"Validator bridge request failed: {exc}")
+
+    if response.get("error"):
+        error = response["error"]
+        message = error.get("message") if isinstance(error, dict) else str(error)
+        return AIValidationResult(valid=False, reason=f"Validator bridge returned an error: {message}")
+
+    payload = response.get("result") if isinstance(response.get("result"), dict) else response
+    if not isinstance(payload, dict):
+        return AIValidationResult(valid=False, reason="Validator bridge returned an unreadable response.")
+
+    raw_text = str(payload.get("raw_text") or response.get("raw_text") or "").strip()
+    if "valid" not in payload and raw_text:
+        try:
+            payload = _parse_json_object(raw_text)
+        except ValueError as exc:
+            return AIValidationResult(
+                valid=False,
+                reason=f"Unable to parse validator bridge JSON: {exc}",
+                raw_text=raw_text,
+            )
+
+    return _result_from_payload(payload, raw_text=raw_text)
+
+
+def _send_bridge_validation_request(
+    image_path: Path,
+    settings: dict[str, Any],
+    *,
+    bridge_url: str,
+    validation_type: str,
+    evidence_label: str,
+    description: str,
+    prompt: str,
+) -> dict[str, Any]:
+    mime_type = mimetypes.guess_type(str(image_path))[0] or "image/png"
+    image_data = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    body = {
+        "validation_type": validation_type,
+        "evidence_label": evidence_label,
+        "description": description,
+        "prompt": prompt,
+        "image": {
+            "filename": image_path.name,
+            "mime_type": mime_type,
+            "data_base64": image_data,
+        },
+        "options": {
+            "model": settings.get("model", "gpt-4.1-mini"),
+            "image_detail": settings.get("image_detail", "low"),
+            "max_output_tokens": int(settings.get("max_output_tokens", 220)),
+        },
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "CitrixTestAutomationRunner/validator-bridge",
+    }
+    token = _bridge_token(settings)
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    request = urllib.request.Request(
+        bridge_url,
+        data=json.dumps(body).encode("utf-8"),
+        headers=headers,
+        method="POST",
     )
+    timeout_sec = float(settings.get("bridge_timeout_sec", settings.get("timeout_sec", 90)))
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_sec) as response:
+            response_body = response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        raise RuntimeError(detail or f"HTTP {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(str(exc.reason)) from exc
+
+    try:
+        parsed = json.loads(response_body)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Invalid JSON response from validator bridge: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Validator bridge response was not a JSON object.")
+    return parsed
+
+
+def _bridge_validate_url(settings: dict[str, Any]) -> str:
+    raw_url = str(settings.get("bridge_url") or "").strip()
+    if not raw_url:
+        return ""
+    cleaned = raw_url.rstrip("/")
+    if cleaned.endswith("/validate"):
+        return cleaned
+    return f"{cleaned}/validate"
+
+
+def _bridge_token(settings: dict[str, Any]) -> str:
+    token = str(settings.get("bridge_token") or "").strip()
+    if token:
+        return token
+    env_name = str(settings.get("bridge_token_env_var") or "CITRIX_VALIDATOR_TOKEN").strip()
+    return os.environ.get(env_name, "").strip() if env_name else ""
 
 
 def _send_validation_request(
@@ -303,6 +449,20 @@ def _parse_json_object(raw_text: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("response JSON was not an object")
     return parsed
+
+
+def _result_from_payload(payload: dict[str, Any], *, raw_text: str = "") -> AIValidationResult:
+    return AIValidationResult(
+        valid=bool(payload.get("valid")),
+        reason=str(payload.get("reason") or "").strip() or "No reason provided.",
+        cmd_hostname=str(payload.get("cmd_hostname") or "").strip(),
+        overlay_hostname=str(payload.get("overlay_hostname") or "").strip(),
+        ipv4_addresses=tuple(str(value).strip() for value in payload.get("ipv4_addresses", []) if str(value).strip()),
+        version=str(payload.get("version") or "").strip(),
+        available=_coerce_optional_bool(payload.get("available")),
+        fields=_coerce_string_dict(payload.get("fields")),
+        raw_text=raw_text,
+    )
 
 
 def _coerce_optional_bool(value: Any) -> bool | None:

@@ -45,7 +45,7 @@ from core.ocr_validation import (
     validate_yahoo_access_with_windows_ocr,
     validate_zscaler_services_with_windows_ocr,
 )
-from core.screenshot import ScreenshotManager
+from core.screenshot import ScreenshotManager, apply_hostname_overlay_override
 from core.stop_control import StopRequested
 from core.test_categories import evidence_category_for_test_name, should_skip_test_for_desktop, skip_reason_for_test_and_desktop
 from core.test_loader import TestCase
@@ -699,6 +699,14 @@ def _validate_hostname_ip_pass_screenshot(
         )
         return HostnameIPValidationOutcome()
 
+    if _recover_hostname_overlay_from_ocr(
+        ocr_result,
+        screenshot_path,
+        desktop_name,
+        add_step,
+    ):
+        return HostnameIPValidationOutcome()
+
     add_step(f"OCR Failed -> Switching to AI: {ocr_result.reason}", "WARNING")
     _log_ocr_failure_details(ocr_result, add_step, label="Hostname/IP OCR raw text")
     add_step("AI validation started for Hostname/IP evidence screenshot")
@@ -723,6 +731,43 @@ def _validate_hostname_ip_pass_screenshot(
     except ValueError:
         pass
     raise AIValidationFailed(reason)
+
+
+def _recover_hostname_overlay_from_ocr(
+    ocr_result,
+    screenshot_path: Path,
+    desktop_name: str,
+    add_step: Callable[..., None],
+) -> bool:
+    cmd_hostname = str(getattr(ocr_result, "cmd_hostname", "") or "").strip()
+    overlay_hostname = str(getattr(ocr_result, "overlay_hostname", "") or "").strip()
+    ipv4_addresses = tuple(getattr(ocr_result, "ipv4_addresses", ()) or ())
+    if not cmd_hostname or not ipv4_addresses:
+        return False
+
+    overlay_key = overlay_hostname.strip().casefold()
+    reason_text = str(getattr(ocr_result, "reason", "") or "").casefold()
+    overlay_is_unknown = overlay_key in {"", "unknown", "unknowm", "unkn0wn"}
+    overlay_unreadable = "overlay" in reason_text and ("could not read" in reason_text or "mismatch" in reason_text)
+    if not (overlay_is_unknown or overlay_unreadable):
+        return False
+
+    recovered_hostname = apply_hostname_overlay_override(
+        screenshot_path,
+        screenshot_path.parent,
+        desktop_name,
+        cmd_hostname,
+    )
+    if not recovered_hostname:
+        return False
+
+    ipv4_summary = ", ".join(str(value) for value in ipv4_addresses)
+    add_step(
+        "OCR Validation Passed after overlay recovery: "
+        f"hostname={recovered_hostname}, IPv4={ipv4_summary}"
+    )
+    add_step("Updated screenshot overlay hostname from OCR command output.")
+    return True
 
 
 def _should_validate_webview_evidence(test_case_name: str) -> bool:
